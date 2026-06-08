@@ -169,6 +169,7 @@ struct Ashell {
     system_sampler: SystemSampler,
     system: SystemSnapshot,
     last_system_sample: Instant,
+    last_theme_sync: Instant,
     remote_sample_in_flight: bool,
     runtime: Runtime,
     events_rx: mpsc::Receiver<BackendEvent>,
@@ -296,27 +297,13 @@ impl Ashell {
             system_sampler,
             system,
             last_system_sample: Instant::now(),
+            last_theme_sync: Instant::now(),
             remote_sample_in_flight: false,
             runtime: Runtime::new().expect("create tokio runtime"),
             events_rx,
             events_tx,
             _subscriptions,
         };
-
-        if follow_system_theme {
-            cx.spawn(async move |this, cx| {
-                loop {
-                    cx.background_executor()
-                        .timer(Duration::from_secs(60))
-                        .await;
-                    if this.update(cx, |_, cx| {
-                        Theme::sync_system_appearance(None, cx);
-                    }).is_err() {
-                        break;
-                    }
-                }
-            }).detach();
-        }
 
         this.apply_theme_preferences(window, cx);
         // this.open_local(cx);
@@ -358,6 +345,7 @@ impl Ashell {
                     .update(cx, |this, cx| {
                         this.drain_backend_events();
                         this.sample_system_if_due();
+                        this.sync_theme_if_due(cx);
                         cx.notify();
                     })
                     .is_err()
@@ -479,6 +467,13 @@ impl Ashell {
     fn sample_system_if_due(&mut self) {
         if self.last_system_sample.elapsed() >= SystemSampler::interval() {
             self.request_active_system_snapshot();
+        }
+    }
+
+    fn sync_theme_if_due(&mut self, cx: &mut Context<Self>) {
+        if self.follow_system_theme && self.last_theme_sync.elapsed() >= Duration::from_secs(1) {
+            Theme::sync_system_appearance(None, cx);
+            self.last_theme_sync = Instant::now();
         }
     }
 
