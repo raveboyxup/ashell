@@ -468,7 +468,7 @@ impl Ashell {
                             } else {
                                 title.trim()
                             };
-                            
+
                             if potential_path.starts_with('/') || potential_path.starts_with('~') {
                                 let path_to_sync = potential_path.to_string();
                                 if path_to_sync != sftp.current_path {
@@ -535,7 +535,8 @@ impl Ashell {
         ) {
             Ok(backend) => {
                 let title = if cfg!(windows) { "PowerShell" } else { "Local" }.to_string();
-                let mut tab = TerminalTab::new_local(id.clone(), title, backend, self.events_tx.clone());
+                let mut tab =
+                    TerminalTab::new_local(id.clone(), title, backend, self.events_tx.clone());
                 tab.resize(DEFAULT_COLS, DEFAULT_ROWS);
                 self.tabs.push(tab);
                 self.active_tab = Some(id);
@@ -1157,8 +1158,12 @@ impl Ashell {
             DEFAULT_ROWS,
             self.events_tx.clone(),
         );
-        self.tabs
-            .push(TerminalTab::new_ssh(id.clone(), &session, backend, self.events_tx.clone()));
+        self.tabs.push(TerminalTab::new_ssh(
+            id.clone(),
+            &session,
+            backend,
+            self.events_tx.clone(),
+        ));
         let sftp_handle = sftp::spawn_sftp(
             self.runtime.handle(),
             id.clone(),
@@ -3270,7 +3275,26 @@ fn sync_macos_launch_environment() {
 fn sync_macos_launch_environment() {}
 
 fn open_main_window(cx: &mut App) {
-    let window_options = WindowOptions::default();
+    let mut window_options = WindowOptions::default();
+
+    if let Some(display) = cx.displays().first().cloned() {
+        let display_bounds = display.bounds();
+        let width = display_bounds.size.width * 0.8;
+        let height = display_bounds.size.height * 0.9;
+
+        let x = display_bounds.origin.x + (display_bounds.size.width - width) / 2.0;
+
+        #[cfg(target_os = "macos")]
+        let y = display_bounds.origin.y;
+        #[cfg(not(target_os = "macos"))]
+        let y = display_bounds.origin.y + (display_bounds.size.height - height) / 2.0;
+
+        window_options.window_bounds = Some(gpui::WindowBounds::Windowed(Bounds::new(
+            point(x, y),
+            size(width, height),
+        )));
+    }
+
     cx.open_window(window_options, |window, cx| {
         window.activate_window();
         window.set_window_title("ashell");
