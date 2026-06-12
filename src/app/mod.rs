@@ -189,6 +189,35 @@ impl ScrollbarHandle for TerminalScrollbarHandle {
 
 
 
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum MonitoringTab {
+    RemoteFiles,
+    CustomCommands,
+}
+
+impl Default for MonitoringTab {
+    fn default() -> Self {
+        Self::RemoteFiles
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct FlatCommandItem {
+    pub(crate) depth: usize,
+    pub(crate) is_folder: bool,
+    pub(crate) is_expanded: bool,
+    pub(crate) path: Vec<usize>,
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) cmd: Option<String>,
+    pub(crate) append_cr: bool,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CommandContextMenu {
+    pub(crate) position: gpui::Point<Pixels>,
+}
+
 pub(crate) struct Ashell {
     pub(crate) focus_handle: FocusHandle,
     pub(crate) selector_focus_handle: FocusHandle,
@@ -231,6 +260,25 @@ pub(crate) struct Ashell {
     pub(crate) sftp_creating_folder: bool,
     pub(crate) sftp_new_folder_input: Entity<InputState>,
     pub(crate) sftp_delete_scroll_handle: gpui::ScrollHandle,
+    pub(crate) command_tree: Vec<crate::session::config::CommandItem>,
+    pub(crate) command_flat_selection: usize,
+    pub(crate) command_flat_items: Vec<FlatCommandItem>,
+    pub(crate) command_current_path: Vec<usize>,
+    pub(crate) custom_command_input: Entity<InputState>,
+    pub(crate) command_dialog_name_input: Entity<InputState>,
+    pub(crate) command_dialog_cmd_input: Entity<InputState>,
+    pub(crate) commands_focus_handle: FocusHandle,
+    pub(crate) commands_scroll_handle: gpui::ScrollHandle,
+    pub(crate) selected_monitoring_tab: MonitoringTab,
+    pub(crate) command_context_menu: Option<CommandContextMenu>,
+    pub(crate) show_new_folder_dialog: bool,
+    pub(crate) new_folder_name_input: Entity<InputState>,
+    pub(crate) show_command_editor: bool,
+    pub(crate) editing_command_parent_path: Vec<usize>,
+    pub(crate) editing_command_index: Option<usize>,
+    pub(crate) editor_send_to_all: bool,
+    pub(crate) editor_append_cr: bool,
+    pub(crate) editor_clear_after_send: bool,
     pub(crate) show_hidden_files: bool,
     pub(crate) transfers: Vec<crate::terminal::Transfer>,
     pub(crate) show_transfers_dialog: bool,
@@ -308,6 +356,23 @@ impl Ashell {
         });
         let sftp_path_input = cx.new(|cx| InputState::new(window, cx).default_value("/"));
         let sftp_new_folder_input = cx.new(|cx| InputState::new(window, cx).placeholder(t!("new_folder").to_string()));
+        let custom_command_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(t!("type_command_hint").to_string())
+        });
+        let command_dialog_name_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(t!("command_name").to_string())
+        });
+        let command_dialog_cmd_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .multi_line(true)
+                .rows(8)
+                .context_menu(true)
+                .placeholder(t!("command_string").to_string())
+        });
+        let new_folder_name_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(t!("folder_name").to_string())
+        });
 
         let _subscriptions = vec![
             cx.subscribe_in(&host_input, window, Self::on_input_event),
@@ -319,6 +384,10 @@ impl Ashell {
             cx.subscribe_in(&key_inline_input, window, Self::on_input_event),
             cx.subscribe_in(&sftp_path_input, window, Self::on_input_event),
             cx.subscribe_in(&sftp_new_folder_input, window, Self::on_input_event),
+            cx.subscribe_in(&custom_command_input, window, Self::on_input_event),
+            cx.subscribe_in(&command_dialog_name_input, window, Self::on_input_event),
+            cx.subscribe_in(&command_dialog_cmd_input, window, Self::on_input_event),
+            cx.subscribe_in(&new_folder_name_input, window, Self::on_input_event),
         ];
 
         let (events_tx, events_rx) = mpsc::channel();
@@ -409,6 +478,25 @@ impl Ashell {
             connection_scroll_handle: gpui::ScrollHandle::new(),
             connection_progress: None,
             pending_sftp_path_sync: Some("/".into()),
+            command_tree: config.custom_commands().to_vec(),
+            command_flat_selection: 0,
+            command_flat_items: Vec::new(),
+            custom_command_input,
+            command_dialog_name_input,
+            command_dialog_cmd_input,
+            commands_focus_handle: cx.focus_handle(),
+            commands_scroll_handle: gpui::ScrollHandle::new(),
+            command_current_path: Vec::new(),
+            selected_monitoring_tab: MonitoringTab::RemoteFiles,
+            command_context_menu: None,
+            show_new_folder_dialog: false,
+            new_folder_name_input,
+            show_command_editor: false,
+            editing_command_parent_path: Vec::new(),
+            editing_command_index: None,
+            editor_send_to_all: false,
+            editor_append_cr: true,
+            editor_clear_after_send: false,
             sftp_context_menu: None,
             sftp_creating_folder: false,
             sftp_new_folder_input,
@@ -488,6 +576,36 @@ impl Ashell {
                 InputEvent::Blur => {
                     self.sftp_creating_folder = false;
                 }
+                _ => {}
+            }
+        } else if input == &self.custom_command_input {
+            match event {
+                InputEvent::PressEnter { .. } => {
+                    let text = self.custom_command_input.read(cx).text().to_string();
+                    if !text.is_empty() {
+                        self.execute_command_string(&text, window, cx);
+                        if self.editor_clear_after_send {
+                            self.custom_command_input.update(cx, |input, cx| {
+                                input.set_value("", window, cx);
+                            });
+                        }
+                    }
+                    window.prevent_default();
+                    cx.stop_propagation();
+                }
+                _ => {}
+            }
+        } else if input == &self.new_folder_name_input {
+            match event {
+                InputEvent::PressEnter { .. } => {
+                    let name = self.new_folder_name_input.read(cx).text().to_string();
+                    if !name.is_empty() {
+                        self.add_command_folder(&name);
+                    }
+                    window.prevent_default();
+                    cx.stop_propagation();
+                }
+                InputEvent::Blur => {}
                 _ => {}
             }
         }
@@ -816,6 +934,213 @@ impl Ashell {
                 px(line_height),
             ),
         ))
+    }
+
+    pub(crate) fn add_command_folder(&mut self, name: &str) {
+        use crate::session::config::{CommandFolder, CommandItem};
+        let folder = CommandFolder {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: name.to_string(),
+            children: Vec::new(),
+            is_expanded: true,
+        };
+        self.command_tree.push(CommandItem::Folder(folder));
+        self.command_flat_items = flatten_command_tree(&self.command_tree);
+        self.command_flat_selection = self.command_flat_items.len().saturating_sub(1);
+        self.config.set_custom_commands(self.command_tree.clone());
+        let _ = self.config.save();
+    }
+
+    pub(crate) fn add_command_item(&mut self, name: &str, cmd: &str, append_cr: bool) {
+        use crate::session::config::{CommandEntry, CommandItem};
+        let entry = CommandEntry {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: name.to_string(),
+            command_string: cmd.to_string(),
+            append_cr,
+        };
+        push_item_at(&mut self.command_tree, &self.command_current_path,
+            CommandItem::Command(entry));
+        self.command_flat_items = flatten_command_tree(&self.command_tree);
+        self.command_flat_selection = self.command_flat_items.len().saturating_sub(1);
+        self.config.set_custom_commands(self.command_tree.clone());
+        let _ = self.config.save();
+    }
+
+    pub(crate) fn navigate_into_folder(&mut self, path: &[usize]) {
+        self.command_current_path = path.to_vec();
+    }
+
+    pub(crate) fn navigate_up(&mut self) {
+        self.command_current_path.pop();
+    }
+
+    pub(crate) fn current_children(&self) -> Vec<&crate::session::config::CommandItem> {
+        if self.command_current_path.is_empty() {
+            return self.command_tree.iter().collect();
+        }
+        let items = resolve_path(&self.command_tree, &self.command_current_path);
+        items.map(|i| match i {
+            crate::session::config::CommandItem::Folder(f) => f.children.iter().collect(),
+            crate::session::config::CommandItem::Command(_) => vec![],
+        }).unwrap_or_default()
+    }
+
+    pub(crate) fn get_item_at_path(&self, path: &[usize]) -> Option<&crate::session::config::CommandItem> {
+        resolve_path(&self.command_tree, path)
+    }
+
+    pub(crate) fn delete_item_recursive(&mut self, path: &[usize]) {
+        remove_tree_item(&mut self.command_tree, path);
+        self.command_flat_items = flatten_command_tree(&self.command_tree);
+        self.command_flat_selection = self.command_flat_selection.min(
+            self.command_flat_items.len().saturating_sub(1)
+        );
+        if resolve_path(&self.command_tree, &self.command_current_path).is_none() {
+            self.command_current_path.pop();
+        }
+        self.config.set_custom_commands(self.command_tree.clone());
+        let _ = self.config.save();
+    }
+
+    pub(crate) fn get_command_at_path(&self, path: &[usize]) -> Option<(String, bool)> {
+        use crate::session::config::CommandItem;
+        let item = resolve_path(&self.command_tree, path)?;
+        match item {
+            CommandItem::Command(c) => Some((c.command_string.clone(), c.append_cr)),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn rename_node(&mut self, path: &[usize], new_name: &str) {
+        use crate::session::config::CommandItem;
+        let Some(item) = resolve_path(&self.command_tree, path) else { return };
+        if item.name() == new_name { return; }
+        let new_item = match item {
+            CommandItem::Folder(f) => {
+                let mut f2 = f.clone();
+                f2.name = new_name.to_string();
+                CommandItem::Folder(f2)
+            }
+            CommandItem::Command(c) => {
+                let mut c2 = c.clone();
+                c2.name = new_name.to_string();
+                CommandItem::Command(c2)
+            }
+        };
+        set_tree_item(&mut self.command_tree, path, new_item);
+        self.command_flat_items = flatten_command_tree(&self.command_tree);
+        self.config.set_custom_commands(self.command_tree.clone());
+        let _ = self.config.save();
+    }
+
+    pub(crate) fn update_command_string(&mut self, path: &[usize], new_cmd: &str) {
+        use crate::session::config::CommandItem;
+        let Some(item) = resolve_path(&self.command_tree, path) else { return };
+        match item {
+            CommandItem::Command(c) => {
+                let mut c2 = c.clone();
+                c2.command_string = new_cmd.to_string();
+                set_tree_item(&mut self.command_tree, path,
+                    CommandItem::Command(c2));
+                self.command_flat_items = flatten_command_tree(&self.command_tree);
+                self.config.set_custom_commands(self.command_tree.clone());
+                let _ = self.config.save();
+            }
+            _ => {}
+        }
+    }
+}
+
+fn remove_tree_item(items: &mut Vec<crate::session::config::CommandItem>, path: &[usize]) {
+    if path.is_empty() { return; }
+    let idx = path[0];
+    if idx >= items.len() { return; }
+    if path.len() == 1 {
+        items.remove(idx);
+    } else if let crate::session::config::CommandItem::Folder(f) = &mut items[idx] {
+        remove_tree_item(&mut f.children, &path[1..]);
+    }
+}
+
+pub(crate) fn set_tree_item(items: &mut [crate::session::config::CommandItem], path: &[usize],
+    new_item: crate::session::config::CommandItem) {
+    if path.is_empty() { return; }
+    let idx = path[0];
+    if idx >= items.len() { return; }
+    if path.len() == 1 {
+        items[idx] = new_item;
+    } else if let crate::session::config::CommandItem::Folder(f) = &mut items[idx] {
+        set_tree_item(&mut f.children, &path[1..], new_item);
+    }
+}
+
+pub(crate) fn resolve_path<'a>(items: &'a [crate::session::config::CommandItem], path: &[usize])
+    -> Option<&'a crate::session::config::CommandItem> {
+    if path.is_empty() { return None; }
+    let idx = path[0];
+    let item = items.get(idx)?;
+    if path.len() == 1 { Some(item) }
+    else if let crate::session::config::CommandItem::Folder(f) = item {
+        resolve_path(&f.children, &path[1..])
+    } else { None }
+}
+
+pub(crate) fn push_item_at(items: &mut Vec<crate::session::config::CommandItem>, path: &[usize],
+    new_item: crate::session::config::CommandItem) {
+    if path.is_empty() {
+        items.push(new_item);
+    } else if let Some(item) = items.get_mut(path[0]) {
+        if let crate::session::config::CommandItem::Folder(f) = item {
+            push_item_at(&mut f.children, &path[1..], new_item);
+        }
+    }
+}
+
+pub(crate) fn flatten_command_tree(items: &[crate::session::config::CommandItem]) -> Vec<FlatCommandItem> {
+    let mut result = Vec::new();
+    flatten_recursive(items, &mut Vec::new(), &mut result, 0);
+    result
+}
+
+fn flatten_recursive(
+    items: &[crate::session::config::CommandItem],
+    parent_path: &mut Vec<usize>,
+    result: &mut Vec<FlatCommandItem>,
+    depth: usize,
+) {
+    for (i, item) in items.iter().enumerate() {
+        parent_path.push(i);
+        match item {
+            crate::session::config::CommandItem::Folder(f) => {
+                result.push(FlatCommandItem {
+                    depth,
+                    is_folder: true,
+                    is_expanded: f.is_expanded,
+                    path: parent_path.clone(),
+                    id: f.id.clone(),
+                    name: f.name.clone(),
+                    cmd: None,
+                    append_cr: false,
+                });
+                if f.is_expanded {
+                    flatten_recursive(&f.children, parent_path, result, depth + 1);
+                }
+            }
+            crate::session::config::CommandItem::Command(c) => {
+                result.push(FlatCommandItem {
+                    depth,
+                    is_folder: false,
+                    is_expanded: false,
+                    path: parent_path.clone(),
+                    id: c.id.clone(),
+                    name: c.name.clone(),
+                    cmd: Some(c.command_string.clone()),
+                    append_cr: c.append_cr,
+                });
+            }
+        }
+        parent_path.pop();
     }
 }
 
