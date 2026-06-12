@@ -17,25 +17,6 @@ jobs:
         channel: stable
         targets: x86_64-pc-windows-msvc
 
-    - name: Configure Cargo Mirror (Avoid Network Error)
-      # 注入镜像源配置，彻底解决下载依赖卡死、连接失败的问题
-      shell: bash
-      run: |
-        mkdir -p ~/.cargo
-        cat << 'EOF' > ~/.cargo/config.toml
-        [source.crates-io]
-        replace-with = 'rsproxy'
-
-        [source.rsproxy]
-        registry = "https://rsproxy.cn/crates.io-index"
-
-        [source.rsproxy-sparse]
-        registry = "sparse+https://rsproxy.cn/index/"
-
-        [net]
-        git-fetch-with-cli = true
-        EOF
-
     - name: Cache Cargo packages
       uses: actions/cache@v4
       with:
@@ -46,12 +27,14 @@ jobs:
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
     - name: Build Rust Standalone
-      # 纯 Rust 项目直接全速编译，拿掉错误忽略，如果报错直接能在日志里看清
-      run: cargo build --release
+      # 开启原生最高效的稀疏索引协议，直接向官方服务器拉取，不需要经过任何第三方中转
+      env:
+        CARGO_REGISTRIES_CRATES_IO_PROTOCOL: "sparse"
+      run: |
+        cargo build --release
 
     - name: Upload Build Artifacts
       uses: actions/upload-artifact@v4
       with:
         name: ashell-windows-exe
-        # 纯 Rust 项目的 Windows 产物只可能在这个目录下
         path: target/release/*.exe
