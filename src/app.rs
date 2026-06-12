@@ -160,7 +160,6 @@ pub(crate) struct Ashell {
     pub(crate) _subscriptions: Vec<gpui::Subscription>,
 }
 
-#[derive(Clone)]
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum MonitoringTab {
     RemoteFiles,
@@ -173,6 +172,7 @@ impl Default for MonitoringTab {
     }
 }
 
+#[derive(Clone)]
 pub(crate) enum SelectorEntry {
     Local,
     NewSsh,

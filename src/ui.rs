@@ -1576,7 +1576,7 @@ impl Render for Ashell {
                                             } else {
                                                 cx.theme().transparent
                                             })
-                                            .on_click(cx.listener(
+                                            .on_mouse_down(MouseButton::Left, cx.listener(
                                                 |this, _, _, cx| {
                                                     this.selected_monitoring_tab =
                                                         MonitoringTab::RemoteFiles;
@@ -1610,7 +1610,7 @@ impl Render for Ashell {
                                             } else {
                                                 cx.theme().transparent
                                             })
-                                            .on_click(cx.listener(
+                                            .on_mouse_down(MouseButton::Left, cx.listener(
                                                 |this, _, _, cx| {
                                                     this.selected_monitoring_tab =
                                                         MonitoringTab::CustomCommands;
