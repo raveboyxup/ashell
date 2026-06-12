@@ -1548,19 +1548,8 @@ impl Render for Ashell {
                         h_flex()
                             .flex_1()
                             .min_h(px(0.))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w(px(200.))
-                                    .child(self.render_sftp_panel(window, cx)),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w(px(200.))
-                                    .max_w(px(380.))
-                                    .child(self.render_custom_commands_panel(window, cx)),
-                            ),
+                            .child(self.render_sftp_panel(window, cx))
+                            .child(self.render_custom_commands_panel(window, cx)),
                     ),
             );
 
