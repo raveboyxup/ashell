@@ -651,7 +651,7 @@ impl Ashell {
             v_flex()
                 .flex_1()
                 .min_h(px(0.))
-                .overflow_y_scroll()
+                .overflow_y_scrollbar()
                 .track_scroll(&self.commands_scroll_handle)
                 .gap_0()
                 .w_full()
