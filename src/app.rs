@@ -135,6 +135,7 @@ pub(crate) struct Ashell {
     pub(crate) custom_command_input: Entity<InputState>,
     pub(crate) commands_focus_handle: FocusHandle,
     pub(crate) commands_scroll_handle: gpui::ScrollHandle,
+    pub(crate) selected_monitoring_tab: MonitoringTab,
     pub(crate) show_hidden_files: bool,
     pub(crate) transfers: Vec<crate::terminal::Transfer>,
     pub(crate) show_transfers_dialog: bool,
@@ -160,6 +161,18 @@ pub(crate) struct Ashell {
 }
 
 #[derive(Clone)]
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum MonitoringTab {
+    RemoteFiles,
+    CustomCommands,
+}
+
+impl Default for MonitoringTab {
+    fn default() -> Self {
+        Self::RemoteFiles
+    }
+}
+
 pub(crate) enum SelectorEntry {
     Local,
     NewSsh,
@@ -312,6 +325,7 @@ impl Ashell {
             custom_command_input,
             commands_focus_handle: cx.focus_handle(),
             commands_scroll_handle: gpui::ScrollHandle::new(),
+            selected_monitoring_tab: MonitoringTab::RemoteFiles,
             show_hidden_files: config.show_hidden_files(),
             transfers: config.transfers(),
             show_transfers_dialog: false,

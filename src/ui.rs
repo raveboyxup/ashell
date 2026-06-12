@@ -22,7 +22,7 @@ use gpui_component::{
 use rust_i18n::t;
 
 use crate::{
-    Ashell, SIDEBAR_WIDTH, TERMINAL_KEY_CONTEXT,
+    Ashell, MonitoringTab, SIDEBAR_WIDTH, TERMINAL_KEY_CONTEXT,
     sftp_ops::is_editable_text_file,
     sftp::format_mtime,
     system::format_bytes,
@@ -1544,13 +1544,103 @@ impl Render for Ashell {
                 v_flex()
                     .size_full()
                     .child(self.render_monitoring_panel(window.viewport_size().width, cx))
-                    .child(
-                        h_flex()
+                    .child({
+                        let is_remote = matches!(
+                            self.selected_monitoring_tab,
+                            MonitoringTab::RemoteFiles
+                        );
+                        let is_commands = matches!(
+                            self.selected_monitoring_tab,
+                            MonitoringTab::CustomCommands
+                        );
+                        v_flex()
                             .flex_1()
                             .min_h(px(0.))
-                            .child(self.render_sftp_panel(window, cx))
-                            .child(self.render_custom_commands_panel(window, cx)),
-                    ),
+                            .child(
+                                h_flex()
+                                    .flex_none()
+                                    .h(px(34.))
+                                    .items_center()
+                                    .gap_0()
+                                    .border_b_1()
+                                    .border_color(cx.theme().border)
+                                    .bg(cx.theme().tab_bar)
+                                    .child(
+                                        h_flex()
+                                            .h(px(34.))
+                                            .px_3()
+                                            .items_center()
+                                            .cursor_pointer()
+                                            .bg(if is_remote {
+                                                cx.theme().background
+                                            } else {
+                                                cx.theme().transparent
+                                            })
+                                            .on_click(cx.listener(
+                                                |this, _, _, cx| {
+                                                    this.selected_monitoring_tab =
+                                                        MonitoringTab::RemoteFiles;
+                                                    cx.notify();
+                                                },
+                                            ))
+                                            .child(
+                                                div()
+                                                    .text_size(rems(1.0))
+                                                    .font_weight(if is_remote {
+                                                        FontWeight::SEMIBOLD
+                                                    } else {
+                                                        FontWeight::NORMAL
+                                                    })
+                                                    .text_color(if is_remote {
+                                                        cx.theme().primary
+                                                    } else {
+                                                        cx.theme().muted_foreground
+                                                    })
+                                                    .child(t!("remote_files")),
+                                            ),
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .h(px(34.))
+                                            .px_3()
+                                            .items_center()
+                                            .cursor_pointer()
+                                            .bg(if is_commands {
+                                                cx.theme().background
+                                            } else {
+                                                cx.theme().transparent
+                                            })
+                                            .on_click(cx.listener(
+                                                |this, _, _, cx| {
+                                                    this.selected_monitoring_tab =
+                                                        MonitoringTab::CustomCommands;
+                                                    cx.notify();
+                                                },
+                                            ))
+                                            .child(
+                                                div()
+                                                    .text_size(rems(1.0))
+                                                    .font_weight(if is_commands {
+                                                        FontWeight::SEMIBOLD
+                                                    } else {
+                                                        FontWeight::NORMAL
+                                                    })
+                                                    .text_color(if is_commands {
+                                                        cx.theme().primary
+                                                    } else {
+                                                        cx.theme().muted_foreground
+                                                    })
+                                                    .child(t!("custom_commands")),
+                                            ),
+                                    )
+                                    .child(div().flex_1()),
+                            )
+                            .child(if is_remote {
+                                self.render_sftp_panel(window, cx).into_any_element()
+                            } else {
+                                self.render_custom_commands_panel(window, cx).into_any_element()
+                            })
+                    }),
             );
 
         let body_panel = v_resizable("ashell-body")
