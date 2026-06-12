@@ -1,37 +1,40 @@
-name: Build Windows Release
+name: Build Windows Release (Pure Rust)
 
 on:
-  workflow_dispatch: # 允许手动触发
+  workflow_dispatch:
 
 jobs:
   build-windows:
-    # 锁定具体的 Windows 运行环境，避免 Latest 重定向变化
     runs-on: windows-2025
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    # 1. 替代方案：使用稳定且广泛使用的 moonrepo/setup-rust
     - name: Set up Rust toolchain
       uses: moonrepo/setup-rust@v1
       with:
         channel: stable
         targets: x86_64-pc-windows-msvc
 
-    - name: Set up JDK 17
-      uses: actions/setup-java@v4
-      with:
-        java-version: '17'
-        distribution: 'temurin'
+    - name: Configure Cargo Mirror (Avoid Network Error)
+      # 注入镜像源配置，彻底解决下载依赖卡死、连接失败的问题
+      shell: bash
+      run: |
+        mkdir -p ~/.cargo
+        cat << 'EOF' > ~/.cargo/config.toml
+        [source.crates-io]
+        replace-with = 'rsproxy'
 
-    - name: Cache Gradle packages
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.gradle/caches
-          ~/.gradle/wrapper
-        key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+        [source.rsproxy]
+        registry = "https://rsproxy.cn/crates.io-index"
+
+        [source.rsproxy-sparse]
+        registry = "sparse+https://rsproxy.cn/index/"
+
+        [net]
+        git-fetch-with-cli = true
+        EOF
 
     - name: Cache Cargo packages
       uses: actions/cache@v4
@@ -42,27 +45,13 @@ jobs:
           target
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-    - name: Build with Gradle
-      run: |
-        if (Test-Path "gradlew.bat") {
-          .\gradlew.bat build
-        } else {
-          echo "No gradlew.bat found, skipping gradle build."
-        }
-      continue-on-error: true
-      
-    - name: Build Rust Standalone (Fallback)
-      run: |
-        if (Test-Path "Cargo.toml") { cargo build --release }
-        if (Test-Path "rust/Cargo.toml") { cd rust; cargo build --release }
-      continue-on-error: true
+    - name: Build Rust Standalone
+      # 纯 Rust 项目直接全速编译，拿掉错误忽略，如果报错直接能在日志里看清
+      run: cargo build --release
 
     - name: Upload Build Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: ashell-windows-binary
-        path: |
-          **/build/libs/*.jar
-          **/build/distributions/*.zip
-          **/target/release/*.exe
-          **/target/release/*.dll
+        name: ashell-windows-exe
+        # 纯 Rust 项目的 Windows 产物只可能在这个目录下
+        path: target/release/*.exe
