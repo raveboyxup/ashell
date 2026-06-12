@@ -912,7 +912,20 @@ impl Ashell {
                                     .text_size(rems(0.833))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(net_color)
-                                    .child("NET"),
+                                    .child(if self.system.active_nic.is_empty() {
+                                        "NET".into()
+                                    } else {
+                                        format!("NET ({})", self.system.active_nic)
+                                    }),
+                            )
+                            .child(
+                                Button::new("net-cycle")
+                                    .ghost()
+                                    .xsmall()
+                                    .icon(IconName::ArrowRight)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.cycle_nic(cx);
+                                    })),
                             )
                             .child(div().flex_1())
                             .child(
@@ -1020,6 +1033,15 @@ impl Ashell {
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(disk_color)
                                     .child("DISK"),
+                            )
+                            .child(
+                                Button::new("disk-refresh")
+                                    .ghost()
+                                    .xsmall()
+                                    .icon(IconName::ArrowRight)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.refresh_disk_info(cx);
+                                    })),
                             )
                             .child(div().flex_1())
                             .child(

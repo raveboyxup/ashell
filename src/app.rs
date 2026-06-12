@@ -702,4 +702,38 @@ impl Ashell {
             ),
         ))
     }
+
+    pub(crate) fn refresh_disk_info(&mut self, cx: &mut Context<Self>) {
+        self.last_system_sample = Instant::now();
+        let snapshot = self.system_sampler.sample();
+        self.system = snapshot;
+        cx.notify();
+    }
+
+    pub(crate) fn cycle_nic(&mut self, cx: &mut Context<Self>) {
+        let names = self.system_sampler.nic_names();
+        if names.is_empty() {
+            return;
+        }
+        let current = self.system.active_nic.clone();
+        let next = if current.is_empty() {
+            names[0].clone()
+        } else if let Some(pos) = names.iter().position(|n| n == &current) {
+            if pos + 1 < names.len() {
+                names[pos + 1].clone()
+            } else {
+                String::new()
+            }
+        } else {
+            names[0].clone()
+        };
+        let sel = if next.is_empty() { None } else { Some(next.clone()) };
+        self.system_sampler.set_selected_nic(sel);
+        self.net_rx_history.clear();
+        self.net_tx_history.clear();
+        self.last_system_sample = Instant::now();
+        let snapshot = self.system_sampler.sample();
+        self.system = snapshot;
+        cx.notify();
+    }
 }

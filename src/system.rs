@@ -33,6 +33,8 @@ pub struct SystemSnapshot {
     pub net_tx: String,
     pub net_rx_rate: u64,
     pub net_tx_rate: u64,
+    pub net_names: Vec<String>,
+    pub active_nic: String,
     pub disks: Vec<DiskSample>,
 }
 
@@ -40,6 +42,7 @@ pub struct SystemSampler {
     sys: System,
     nets: Networks,
     disks: Disks,
+    selected_nic: Option<String>,
     last_rx_total: u64,
     last_tx_total: u64,
     last_instant: Instant,
@@ -58,6 +61,7 @@ impl SystemSampler {
             sys,
             nets,
             disks,
+            selected_nic: None,
             last_rx_total,
             last_tx_total,
             last_instant: Instant::now(),
@@ -80,8 +84,18 @@ impl SystemSampler {
         let swap_total = self.sys.total_swap();
         let swap_used = self.sys.used_swap();
 
-        let rx_total: u64 = self.nets.iter().map(|(_, d)| d.total_received()).sum();
-        let tx_total: u64 = self.nets.iter().map(|(_, d)| d.total_transmitted()).sum();
+        let rx_total: u64 = self
+            .nets
+            .iter()
+            .filter(|(n, _)| self.selected_nic.as_deref().map_or(true, |sel| n == sel))
+            .map(|(_, d)| d.total_received())
+            .sum();
+        let tx_total: u64 = self
+            .nets
+            .iter()
+            .filter(|(n, _)| self.selected_nic.as_deref().map_or(true, |sel| n == sel))
+            .map(|(_, d)| d.total_transmitted())
+            .sum();
         let now = Instant::now();
         let elapsed = now
             .duration_since(self.last_instant)
@@ -124,8 +138,35 @@ impl SystemSampler {
             net_tx: format!("{}/s", format_bytes(tx_rate)),
             net_rx_rate: rx_rate,
             net_tx_rate: tx_rate,
+            net_names: self.nic_names(),
+            active_nic: self.selected_nic.clone().unwrap_or_default(),
             disks,
         }
+    }
+
+    pub fn nic_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.nets.iter().map(|(n, _)| n.clone()).collect();
+        names.sort();
+        names
+    }
+
+    pub fn set_selected_nic(&mut self, name: Option<String>) {
+        self.selected_nic = name;
+        let rx_total: u64 = self
+            .nets
+            .iter()
+            .filter(|(n, _)| self.selected_nic.as_deref().map_or(true, |sel| n == sel))
+            .map(|(_, d)| d.total_received())
+            .sum();
+        let tx_total: u64 = self
+            .nets
+            .iter()
+            .filter(|(n, _)| self.selected_nic.as_deref().map_or(true, |sel| n == sel))
+            .map(|(_, d)| d.total_transmitted())
+            .sum();
+        self.last_rx_total = rx_total;
+        self.last_tx_total = tx_total;
+        self.last_instant = Instant::now();
     }
 }
 
@@ -222,6 +263,8 @@ pub fn remote_snapshot_from_kv(raw: &str) -> Result<SystemSnapshot> {
         net_tx: format!("{}/s", format_bytes(tx_rate)),
         net_rx_rate: rx_rate,
         net_tx_rate: tx_rate,
+        net_names: Vec::new(),
+        active_nic: String::new(),
         disks,
     })
 }
