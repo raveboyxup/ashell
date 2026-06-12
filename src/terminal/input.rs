@@ -413,4 +413,78 @@ impl Ashell {
             cx.notify();
         }
     }
+
+    pub(crate) fn execute_command_string(
+        &mut self,
+        cmd: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut bytes = cmd.as_bytes().to_vec();
+        bytes.push(b'\n');
+        self.send_terminal_input(bytes, window, cx);
+    }
+
+    pub(crate) fn focus_commands_panel(
+        &mut self,
+        _: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.commands_focus_handle.focus(window, cx);
+        cx.notify();
+    }
+
+    pub(crate) fn on_commands_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event.keystroke.key.as_str() {
+            "ArrowUp" => {
+                self.command_flat_selection = self
+                    .command_flat_selection
+                    .saturating_sub(1);
+                cx.notify();
+                window.prevent_default();
+                cx.stop_propagation();
+            }
+            "ArrowDown" => {
+                if self.command_flat_selection + 1 < self.command_flat_items.len() {
+                    self.command_flat_selection += 1;
+                    cx.notify();
+                }
+                window.prevent_default();
+                cx.stop_propagation();
+            }
+            "Enter" => {
+                let (cmd_text, folder_path) = if let Some(item) = self.command_flat_items.get(self.command_flat_selection) {
+                    let c = item.cmd.clone().map(|c| if item.append_cr { format!("{}\r", c) } else { c });
+                    let p = if item.is_folder { Some(item.path.clone()) } else { None };
+                    (c, p)
+                } else {
+                    (None, None)
+                };
+                if let Some(text) = cmd_text {
+                    self.execute_command_string(&text, window, cx);
+                } else if let Some(path) = folder_path {
+                    self.navigate_into_folder(&path);
+                    cx.notify();
+                }
+                window.prevent_default();
+                cx.stop_propagation();
+            }
+            _ => {}
+        }
+    }
+
+    pub(crate) fn remove_custom_command(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index >= self.command_flat_items.len() {
+            return;
+        }
+        let path = self.command_flat_items[index].path.clone();
+        self.delete_item_recursive(&path);
+        cx.notify();
+    }
 }

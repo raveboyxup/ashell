@@ -6,6 +6,7 @@ use gpui::{
 use gpui_component::{
     ActiveTheme as _, Disableable as _, IconName, Sizable as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
+    checkbox::Checkbox,
     dialog::Dialog,
     h_flex,
     input::Input,
@@ -22,6 +23,8 @@ use crate::{
     session::config::AuthMethod,
     system::format_bytes,
 };
+use crate::session::config::{CommandEntry, CommandItem};
+use crate::app::{flatten_command_tree, push_item_at, set_tree_item, resolve_path};
 
 impl Ashell {
     pub(crate) fn show_ssh_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1325,6 +1328,331 @@ impl Ashell {
                                         .text_size(rems(1.0))
                                         .text_color(cx.theme().muted_foreground)
                                         .child(t!("theme_management_hint")),
+                                ),
+                        )
+                    }
+                })
+        });
+    }
+
+    pub(crate) fn show_new_folder_dialog(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let input = self.new_folder_name_input.clone();
+        input.update(cx, |input, cx| {
+            input.set_value("", window, cx);
+        });
+        let view = cx.entity();
+        window.open_dialog(cx, move |dialog: Dialog, _window, cx| {
+            let view = view.clone();
+            let input = input.clone();
+            dialog
+                .title(t!("new_folder").to_string())
+                .w(px(400.))
+                .overlay_closable(true)
+                .content(move |content, window, cx| {
+                    let view = view.clone();
+                    let input = input.clone();
+                    content.child(
+                        v_flex()
+                            .gap_3()
+                            .child(
+                                v_flex()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .text_size(rems(0.833))
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child(t!("folder_name")),
+                                    )
+                                    .child(Input::new(&input).tab_index(0)),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .justify_end()
+                                    .child(
+                                        Button::new("folder-dialog-cancel")
+                                            .ghost()
+                                            .label(t!("cancel"))
+                                            .on_click({
+                                                let view = view.clone();
+                                                move |_, window, cx| {
+                                                    window.close_dialog(cx);
+                                                    let _ = view.update(cx, |this, cx| {
+                                                        cx.notify();
+                                                    });
+                                                }
+                                            }),
+                                    )
+                                    .child(
+                                        Button::new("folder-dialog-create")
+                                            .primary()
+                                            .label(t!("add"))
+                                            .on_click({
+                                                let view = view.clone();
+                                                let input = input.clone();
+                                                move |_, window, cx| {
+                                                    let name = input.read(cx).text().to_string();
+                                                    if !name.is_empty() {
+                                                        let _ = view.update(cx, |this, cx| {
+                                                            this.add_command_folder(&name);
+                                                            cx.notify();
+                                                        });
+                                                    }
+                                                    window.close_dialog(cx);
+                                                }
+                                            }),
+                                    ),
+                            ),
+                    )
+                })
+        });
+    }
+
+    pub(crate) fn show_rename_dialog(
+        &mut self,
+        path: Vec<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let input = self.new_folder_name_input.clone();
+        let current_name = self.get_item_at_path(&path)
+            .map(|i| i.name().to_string())
+            .unwrap_or_default();
+        input.update(cx, |input, cx| {
+            input.set_value(&current_name, window, cx);
+        });
+        let view = cx.entity();
+        let path_clone = path.clone();
+        window.open_dialog(cx, move |dialog: Dialog, _window, cx| {
+            let view = view.clone();
+            let input = input.clone();
+            let path = path_clone.clone();
+            dialog
+                .title(t!("rename").to_string())
+                .w(px(400.))
+                .overlay_closable(true)
+                .content(move |content, window, cx| {
+                    let view = view.clone();
+                    let input = input.clone();
+                    let path = path.clone();
+                    content.child(
+                        v_flex()
+                            .gap_3()
+                            .child(
+                                v_flex()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .text_size(rems(0.833))
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child(t!("name")),
+                                    )
+                                    .child(Input::new(&input).tab_index(0)),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .justify_end()
+                                    .child(
+                                        Button::new("rename-dialog-cancel")
+                                            .ghost()
+                                            .label(t!("cancel"))
+                                            .on_click({
+                                                let view = view.clone();
+                                                move |_, window, cx| {
+                                                    window.close_dialog(cx);
+                                                    let _ = view.update(cx, |this, cx| {
+                                                        cx.notify();
+                                                    });
+                                                }
+                                            }),
+                                    )
+                                    .child(
+                                        Button::new("rename-dialog-save")
+                                            .primary()
+                                            .label(t!("save"))
+                                            .on_click({
+                                                let view = view.clone();
+                                                let input = input.clone();
+                                                let path = path.clone();
+                                                move |_, window, cx| {
+                                                    let name = input.read(cx).text().to_string();
+                                                    if !name.is_empty() {
+                                                        let _ = view.update(cx, |this, cx| {
+                                                            this.rename_node(&path, &name);
+                                                            cx.notify();
+                                                        });
+                                                    }
+                                                    window.close_dialog(cx);
+                                                }
+                                            }),
+                                    ),
+                            ),
+                    )
+                })
+        });
+    }
+
+    pub(crate) fn show_custom_command_dialog(
+        &mut self,
+        edit_path: Option<Vec<usize>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let name_input = self.command_dialog_name_input.clone();
+        let cmd_input = self.command_dialog_cmd_input.clone();
+        let (name, command) = edit_path
+            .as_ref()
+            .and_then(|path| {
+                let item = resolve_path(&self.command_tree, path)?;
+                let cmd = match item {
+                    crate::session::config::CommandItem::Command(c) => c.command_string.clone(),
+                    _ => return None,
+                };
+                Some((item.name().to_string(), cmd))
+            })
+            .unwrap_or_default();
+        name_input.update(cx, |input, cx| {
+            input.set_value(&name, window, cx);
+        });
+        cmd_input.update(cx, |input, cx| {
+            input.set_value(&command, window, cx);
+        });
+
+        let is_new = edit_path.is_none();
+        let title = if is_new { t!("new_command") } else { t!("edit_command") };
+        let view = cx.entity();
+        let parent_path = if is_new { self.command_current_path.clone() }
+                         else { Vec::new() };
+
+        window.open_dialog(cx, move |dialog: Dialog, _window, cx| {
+            dialog
+                .title(title.to_string())
+                .w(px(480.))
+                .overlay_closable(true)
+                .content({
+                    let view = view.clone();
+                    let name_input = name_input.clone();
+                    let cmd_input = cmd_input.clone();
+                    let edit_path = edit_path.clone();
+                    let parent_path = parent_path.clone();
+                    move |content, window, cx| {
+                        let view = view.clone();
+                        let name_input = name_input.clone();
+                        let cmd_input = cmd_input.clone();
+                        let cr_state = view.update(cx, |this, _| this.editor_append_cr);
+                        content.child(
+                            v_flex()
+                                .gap_3()
+                                .child(
+                                    v_flex()
+                                        .gap_1()
+                                        .child(
+                                            div()
+                                                .text_size(rems(0.833))
+                                                .text_color(cx.theme().muted_foreground)
+                                                .child(t!("command_name")),
+                                        )
+                                        .child(Input::new(&name_input).tab_index(0)),
+                                )
+                                .child(
+                                    v_flex()
+                                        .gap_1()
+                                        .child(
+                                            div()
+                                                .text_size(rems(0.833))
+                                                .text_color(cx.theme().muted_foreground)
+                                                .child(t!("command_string")),
+                                        )
+                                        .child(
+                                            Input::new(&cmd_input)
+                                                .tab_index(1)
+                                                .h(px(180.)),
+                                        ),
+                                )
+                                .child(
+                                    h_flex()
+                                        .gap_2()
+                                        .child(
+                                            Checkbox::new("cmd-dialog-append-cr")
+                                                .small()
+                                                .label(t!("append_cr").to_string())
+                                                .checked(cr_state)
+                                                .on_click({
+                                                    let view = view.clone();
+                                                    move |checked, _, cx| {
+                                                        view.update(cx, |this, cx| {
+                                                            this.editor_append_cr = *checked;
+                                                            cx.notify();
+                                                        });
+                                                    }
+                                                }),
+                                        )
+                                        .child(
+                                            h_flex()
+                                                .flex_1()
+                                                .justify_end()
+                                                .gap_2()
+                                                .child(
+                                                    Button::new("cmd-dialog-cancel")
+                                                        .ghost()
+                                                        .label(t!("cancel"))
+                                                        .on_click({
+                                                            let view = view.clone();
+                                                            move |_, window, cx| {
+                                                                window.close_dialog(cx);
+                                                                let _ = view.update(cx, |this, cx| {
+                                                                    cx.notify();
+                                                                });
+                                                            }
+                                                        }),
+                                                )
+                                                .child(
+                                                    Button::new("cmd-dialog-save")
+                                                        .primary()
+                                                        .label(if is_new { t!("add") } else { t!("save") })
+                                                        .on_click({
+                                                            let view = view.clone();
+                                                            let name_input = name_input.clone();
+                                                            let cmd_input = cmd_input.clone();
+                                                            let edit_path = edit_path.clone();
+                                                            let parent_path = parent_path.clone();
+                                                            move |_, window, cx| {
+                                                                let n = name_input.read(cx).text().to_string();
+                                                                let c = cmd_input.read(cx).text().to_string();
+                                                                if !n.is_empty() && !c.is_empty() {
+                                                                    let _ = view.update(cx, |this, cx| {
+                                                                        let cmd = CommandEntry {
+                                                                            id: uuid::Uuid::new_v4().to_string(),
+                                                                            name: n,
+                                                                            command_string: c,
+                                                                            append_cr: this.editor_append_cr,
+                                                                        };
+                                                                        if let Some(ref path) = edit_path {
+                                                                            set_tree_item(&mut this.command_tree,
+                                                                                path,
+                                                                                CommandItem::Command(cmd));
+                                                                        } else {
+                                                                            push_item_at(&mut this.command_tree,
+                                                                                &parent_path,
+                                                                                CommandItem::Command(cmd));
+                                                                        }
+                                                                        this.command_flat_items = flatten_command_tree(&this.command_tree);
+                                                                        this.command_flat_selection = this.command_flat_items.len().saturating_sub(1);
+                                                                        this.config.set_custom_commands(this.command_tree.clone());
+                                                                        let _ = this.config.save();
+                                                                        cx.notify();
+                                                                    });
+                                                                }
+                                                                window.close_dialog(cx);
+                                                            }
+                                                        }),
+                                                ),
+                                        ),
                                 ),
                         )
                     }

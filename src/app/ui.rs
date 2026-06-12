@@ -23,7 +23,7 @@ use rust_i18n::t;
 
 use crate::{
     Ashell, PaneLayout,
-    app::constants::{SIDEBAR_WIDTH, TERMINAL_KEY_CONTEXT},
+    app::{MonitoringTab, constants::{SIDEBAR_WIDTH, TERMINAL_KEY_CONTEXT}},
     sftp::ops::is_editable_text_file,
     sftp::format_mtime,
     system::format_bytes,
@@ -217,7 +217,7 @@ impl Ashell {
                             this.sftp_panel_minimized = false;
                             let prev_size = this.prev_monitoring_size.unwrap_or(px(328.));
                             
-                            cx.on_next_frame(window, move |_this: &mut crate::app::Ashell, window: &mut gpui::Window, cx: &mut gpui::Context<crate::app::Ashell>| {
+                            cx.on_next_frame(window, move |this: &mut crate::app::Ashell, window: &mut gpui::Window, cx: &mut gpui::Context<crate::app::Ashell>| {
                                 cx.on_next_frame(window, move |this: &mut crate::app::Ashell, window: &mut gpui::Window, cx: &mut gpui::Context<crate::app::Ashell>| {
                                     this.body_panels.update(cx, |state, cx| {
                                         let sizes = state.sizes();
@@ -1030,143 +1030,338 @@ impl Ashell {
         panel
     }
 
-    fn render_sidebar_monitoring_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let cpu_pct = self.system.cpu_percent;
-        let mem_pct = self.system.mem_percent;
-        let swap_pct = self.system.swap_percent;
+    fn render_custom_commands_content(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let view = cx.entity();
+        let gap_px = px(6.);
+        let tile_h = px(34.);
+        let root_folders: Vec<&crate::session::config::CommandItem> = self.command_tree.iter()
+            .filter(|i| i.is_folder())
+            .collect();
+        let selected_path = self.command_current_path.clone();
+        let has_selected = !selected_path.is_empty();
+        let cmd_items = if has_selected { self.current_children() } else { vec![] };
 
-        let cpu_color = cx.theme().chart_1;
-        let mem_color = cx.theme().chart_2;
-        let swap_color = cx.theme().chart_3;
-        let disk_color = cx.theme().chart_5;
-        let net_color = cx.theme().chart_4;
-        let muted_fg = cx.theme().muted_foreground;
+        // --- Zone A: folder bar ---
+        let folder_tiles: Vec<gpui::AnyElement> = root_folders.iter().enumerate().map(|(ix, item)| {
+            let path = vec![ix];
+            let is_active = selected_path == path;
+            let name = item.name().to_string();
+            let bg = if is_active { cx.theme().primary } else { cx.theme().muted.opacity(0.2) };
+            div()
+                .id(("folder-tile", ix))
+                .h(tile_h)
+                .px_2()
+                .rounded(px(6.))
+                .flex()
+                .items_center()
+                .gap_1()
+                .bg(bg)
+                .hover(|style| style.bg(cx.theme().primary.opacity(0.3)))
+                .cursor_pointer()
+                .on_mouse_down(MouseButton::Left, {
+                    let p = path.clone();
+                    window.listener_for(&view, move |this, _, _, cx| {
+                        if this.command_current_path == p {
+                            this.command_current_path.clear();
+                        } else {
+                            this.command_current_path = p.clone();
+                        }
+                        cx.notify();
+                    })
+                })
+                .context_menu({
+                    let view = cx.entity();
+                    let p = path.clone();
+                    move |menu, _window, _cx| {
+                        menu.item(
+                            PopupMenuItem::new(t!("execute")).on_click(
+                                _window.listener_for(&view, {
+                                    let p2 = p.clone();
+                                    move |this, _, window, cx| {
+                                        this.navigate_into_folder(&p2);
+                                        cx.notify();
+                                    }
+                                }),
+                            ),
+                        )
+                        .item(
+                            PopupMenuItem::new(t!("rename")).on_click(
+                                _window.listener_for(&view, {
+                                    let p2 = p.clone();
+                                    move |this, _, window, cx| {
+                                        this.show_rename_dialog(p2.clone(), window, cx);
+                                    }
+                                }),
+                            ),
+                        )
+                        .item(
+                            PopupMenuItem::new(t!("delete")).on_click(
+                                _window.listener_for(&view, {
+                                    let p2 = p.clone();
+                                    move |this, _, _, cx| {
+                                        this.delete_item_recursive(&p2);
+                                        cx.notify();
+                                    }
+                                }),
+                            ),
+                        )
+                        .item(
+                            PopupMenuItem::new(t!("new_command")).on_click(
+                                _window.listener_for(&view, {
+                                    let p2 = p.clone();
+                                    move |this, _, window, cx| {
+                                        this.navigate_into_folder(&p2);
+                                        this.show_custom_command_dialog(None, window, cx);
+                                    }
+                                }),
+                            ),
+                        )
+                    }
+                })
+                .child(div().text_size(rems(0.75)).child("📁"))
+                .child(div().text_size(rems(0.833)).font_weight(FontWeight::SEMIBOLD)
+                    .text_color(cx.theme().foreground).child(name))
+                .into_any_element()
+        }).collect();
+
+        let zone_a: gpui::AnyElement = if folder_tiles.is_empty() {
+            div().flex_none().h(tile_h).into_any_element()
+        } else {
+            h_flex()
+                .flex_none()
+                .h(tile_h)
+                .px_2()
+                .gap(gap_px)
+                .items_center()
+                .border_b_1()
+                .border_color(cx.theme().border.opacity(0.35))
+                .children(folder_tiles)
+                .into_any_element()
+        };
+
+        // --- Zone B: command tiles ---
+        let zone_b: gpui::AnyElement = if !has_selected {
+            v_flex()
+                .flex_1()
+                .items_center()
+                .justify_center()
+                .child(div().text_size(rems(0.833))
+                    .text_color(cx.theme().muted_foreground)
+                    .child(t!("no_custom_commands")))
+                .into_any_element()
+        } else if cmd_items.is_empty() {
+            v_flex()
+                .flex_1()
+                .items_center()
+                .justify_center()
+                .child(div().text_size(rems(0.833))
+                    .text_color(cx.theme().muted_foreground)
+                    .child(t!("no_custom_commands")))
+                .into_any_element()
+        } else {
+            let tiles: Vec<gpui::AnyElement> = cmd_items.iter().enumerate().map(|(ix, item)| {
+                let is_folder = item.is_folder();
+                let name = item.name().to_string();
+                let path = {
+                    let mut p = selected_path.clone();
+                    p.push(ix);
+                    p
+                };
+                div()
+                    .id(("cmd-tile", ix))
+                    .h(tile_h)
+                    .px_2()
+                    .rounded(px(6.))
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .bg(cx.theme().muted.opacity(0.12))
+                    .hover(|style| style.bg(cx.theme().primary.opacity(0.2)))
+                    .cursor_pointer()
+                    .on_mouse_down(MouseButton::Left, {
+                        let p = path.clone();
+                        window.listener_for(&view, move |this, _, window, cx| {
+                            if is_folder {
+                                this.navigate_into_folder(&p);
+                            } else if let Some((cmd_str, _)) = this.get_command_at_path(&p) {
+                                this.execute_command_string(&cmd_str, window, cx);
+                            }
+                            cx.notify();
+                        })
+                    })
+                    .context_menu({
+                        let view = cx.entity();
+                        let p = path.clone();
+                        let is_fld = is_folder;
+                        move |menu, _window, _cx| {
+                            let mut m = menu;
+                            if is_fld {
+                                m = m.item(
+                                    PopupMenuItem::new(t!("execute")).on_click(
+                                        _window.listener_for(&view, {
+                                            let p2 = p.clone();
+                                            move |this, _, window, cx| {
+                                                this.navigate_into_folder(&p2);
+                                                cx.notify();
+                                            }
+                                        }),
+                                    ),
+                                );
+                            } else {
+                                m = m.item(
+                                    PopupMenuItem::new(t!("execute")).on_click(
+                                        _window.listener_for(&view, {
+                                            let p2 = p.clone();
+                                            move |this, _, window, cx| {
+                                                if let Some((cmd_str, _)) =
+                                                    this.get_command_at_path(&p2) {
+                                                    this.execute_command_string(
+                                                        &cmd_str, window, cx);
+                                                }
+                                            }
+                                        }),
+                                    ),
+                                );
+                            }
+                            m = m.item(
+                                PopupMenuItem::new(t!("rename")).on_click(
+                                    _window.listener_for(&view, {
+                                        let p2 = p.clone();
+                                        move |this, _, window, cx| {
+                                            this.show_rename_dialog(p2.clone(), window, cx);
+                                        }
+                                    }),
+                                ),
+                            );
+                            if !is_fld {
+                                m = m.item(
+                                    PopupMenuItem::new(t!("modify_command")).on_click(
+                                        _window.listener_for(&view, {
+                                            let p2 = p.clone();
+                                            move |this, _, window, cx| {
+                                                this.show_custom_command_dialog(
+                                                    Some(p2.clone()), window, cx);
+                                            }
+                                        }),
+                                    ),
+                                );
+                            }
+                            m = m.item(
+                                PopupMenuItem::new(t!("delete")).on_click(
+                                    _window.listener_for(&view, {
+                                        let p2 = p.clone();
+                                        move |this, _, _, cx| {
+                                            this.delete_item_recursive(&p2);
+                                            cx.notify();
+                                        }
+                                    }),
+                                ),
+                            );
+                            if is_fld {
+                                m = m.item(
+                                    PopupMenuItem::new(t!("new_command")).on_click(
+                                        _window.listener_for(&view, {
+                                            let p2 = p.clone();
+                                            move |this, _, window, cx| {
+                                                this.navigate_into_folder(&p2);
+                                                this.show_custom_command_dialog(
+                                                    None, window, cx);
+                                            }
+                                        }),
+                                    ),
+                                );
+                            }
+                            m
+                        }
+                    })
+                    .child(div().text_size(rems(0.75)).child(
+                        if is_folder { "📁" } else { "⚡" }))
+                    .child(div().text_size(rems(0.833))
+                        .font_weight(if is_folder { FontWeight::SEMIBOLD }
+                                    else { FontWeight::NORMAL })
+                        .text_color(cx.theme().foreground).child(name))
+                    .into_any_element()
+            }).collect();
+
+            div()
+                .flex_1()
+                .min_h(px(0.))
+                .id("commands-scroll")
+                .track_scroll(&self.commands_scroll_handle)
+                .overflow_y_scrollbar()
+                .flex()
+                .flex_wrap()
+                .content_start()
+                .items_start()
+                .gap(gap_px)
+                .px_2()
+                .py_1()
+                .w_full()
+                .children(tiles)
+                .into_any_element()
+        };
+
+        // --- Zone C: input bar ---
+        let zone_c = h_flex()
+            .flex_none()
+            .h(px(34.))
+            .px_2()
+            .items_center()
+            .gap_1()
+            .border_t_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().tab_bar)
+            .child(Input::new(&self.custom_command_input).flex_1().tab_index(0))
+            .child(
+                Button::new("cmd-editor-send")
+                    .primary()
+                    .xsmall()
+                    .label(t!("send").to_string())
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        let text = this.custom_command_input.read(cx).text().to_string();
+                        if !text.is_empty() {
+                            this.execute_command_string(&text, window, cx);
+                            if this.editor_clear_after_send {
+                                this.custom_command_input.update(cx, |input, cx| {
+                                    input.set_value("", window, cx);
+                                });
+                            }
+                        }
+                    })),
+            );
 
         v_flex()
-            .gap_4()
-            .w_full()
-            .p_2()
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .justify_between()
-                            .child(div().text_size(rems(0.85)).text_color(cpu_color).child(t!("cpu").to_string()))
-                            .child(div().text_size(rems(0.85)).text_color(muted_fg).child(format!("{:.1}%", cpu_pct * 100.0))),
+            .flex_1()
+            .min_h(px(0.))
+            .gap_0()
+            .bg(cx.theme().background)
+            .on_key_down(cx.listener(Self::on_commands_key_down))
+            .context_menu({
+                let view = cx.entity();
+                move |menu, window, _cx| {
+                    menu.item(
+                        PopupMenuItem::new(t!("new_command")).on_click(
+                            window.listener_for(&view, move |this, _, window, cx| {
+                                this.show_custom_command_dialog(None, window, cx);
+                            }),
+                        ),
                     )
-                    .child(Progress::new("sidebar-cpu").value(cpu_pct * 100.0).color(cpu_color).with_size(px(4.)).w_full())
-            )
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .justify_between()
-                            .child(div().text_size(rems(0.85)).text_color(mem_color).child(t!("mem").to_string()))
-                            .child(div().text_size(rems(0.85)).text_color(muted_fg).child(self.system.mem_detail.clone())),
+                    .item(
+                        PopupMenuItem::new(t!("new_folder")).on_click(
+                            window.listener_for(&view, move |this, _, window, cx| {
+                                this.show_new_folder_dialog(window, cx);
+                            }),
+                        ),
                     )
-                    .child(Progress::new("sidebar-mem").value(mem_pct * 100.0).color(mem_color).with_size(px(4.)).w_full())
-            )
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .justify_between()
-                            .child(div().text_size(rems(0.85)).text_color(swap_color).child(t!("swap").to_string()))
-                            .child(div().text_size(rems(0.85)).text_color(muted_fg).child(self.system.swap_detail.clone())),
-                    )
-                    .child(Progress::new("sidebar-swap").value(swap_pct * 100.0).color(swap_color).with_size(px(4.)).w_full())
-            )
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .justify_between()
-                            .items_center()
-                            .child(div().text_size(rems(0.85)).text_color(disk_color).child(t!("disk").to_string()))
-                            .children(if self.system.disks.len() > 3 {
-                                Some(div().text_size(rems(0.65)).text_color(muted_fg).child(t!("scroll").to_string()))
-                            } else {
-                                None
-                            })
-                    )
-                    .child(
-                        div()
-                            .relative()
-                            .w_full()
-                            .child(
-                                v_flex()
-                                    .id("sidebar-disk-scroll")
-                                    .track_scroll(&self.disk_scroll_handle)
-                                    .overflow_y_scroll()
-                                    .max_h(px(90.))
-                                    .gap_2()
-                                    .children(self.system.disks.iter().map(|disk| {
-                                        let pct = if disk.total_bytes > 0 {
-                                            (disk.total_bytes - disk.available_bytes) as f64 / disk.total_bytes as f64 * 100.0
-                                        } else {
-                                            0.0
-                                        };
-                                        let mount_short = disk.mount.clone();
-                                        let mount_id = format!("sidebar-disk-{}", mount_short);
-                                        v_flex()
-                                            .gap_0p5()
-                                            .child(
-                                                h_flex()
-                                                    .justify_between()
-                                                    .child(div().text_size(rems(0.75)).text_color(muted_fg).child(mount_short))
-                                                    .child(div().text_size(rems(0.75)).text_color(muted_fg).child(format!("{:.1}%", pct))),
-                                            )
-                                            .child(Progress::new(mount_id).value(pct as f32).color(disk_color).with_size(px(4.)).w_full())
-                                    }))
-                            )
-                            .child(
-                                div()
-                                    .absolute()
-                                    .top_0()
-                                    .right_0()
-                                    .bottom_0()
-                                    .w(px(8.))
-                                    .child(
-                                        Scrollbar::vertical(&self.disk_scroll_handle)
-                                            .scrollbar_show(ScrollbarShow::Scrolling)
-                                    )
-                            )
-                    )
-            )
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .justify_between()
-                            .child(div().text_size(rems(0.85)).text_color(net_color).child(t!("net").to_string()))
-                            .child(div().text_size(rems(0.85)).text_color(muted_fg).child(t!("live"))),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .child(
-                                h_flex()
-                                    .flex_1()
-                                    .min_w(px(0.))
-                                    .gap_1()
-                                    .child(div().flex_none().text_size(rems(0.75)).text_color(net_color).child("↓"))
-                                    .child(div().text_size(rems(0.75)).child(self.system.net_rx.clone()))
-                            )
-                            .child(
-                                h_flex()
-                                    .flex_1()
-                                    .min_w(px(0.))
-                                    .gap_1()
-                                    .child(div().flex_none().text_size(rems(0.75)).text_color(cx.theme().chart_5).child("↑"))
-                                    .child(div().text_size(rems(0.75)).child(self.system.net_tx.clone()))
-                            )
-                    )
-            )
+                }
+            })
+            .child(zone_a)
+            .child(zone_b)
+            .child(zone_c)
     }
 
     fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1232,9 +1427,6 @@ impl Ashell {
                             }),
                     ),
             )
-            .when(self.config.monitoring_position() == "Sidebar", |this| {
-                this.child(self.render_sidebar_monitoring_panel(cx))
-            })
             .child(
                 Button::new("open-ssh-panel")
                     .primary()
@@ -1824,12 +2016,90 @@ impl Render for Ashell {
             .flex_none()
             .child(self.sidebar(cx));
 
+        let is_remote = self.selected_monitoring_tab == MonitoringTab::RemoteFiles;
+        let active_sftp = self.active_sftp();
+
+        let shared_header = h_flex()
+            .flex_none()
+            .h(px(34.))
+            .px_3()
+            .items_center()
+            .gap_2()
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().tab_bar)
+            .child(
+                div()
+                    .cursor_pointer()
+                    .text_size(rems(1.0))
+                    .font_weight(if is_remote {
+                        FontWeight::SEMIBOLD
+                    } else {
+                        FontWeight::NORMAL
+                    })
+                    .text_color(if is_remote {
+                        cx.theme().primary
+                    } else {
+                        cx.theme().muted_foreground
+                    })
+                    .on_mouse_down(MouseButton::Left, cx.listener(
+                        |this, _, _, cx| {
+                            this.selected_monitoring_tab = MonitoringTab::RemoteFiles;
+                            cx.notify();
+                        },
+                    ))
+                    .child(t!("remote_files")),
+            )
+            .child(
+                div()
+                    .cursor_pointer()
+                    .text_size(rems(1.0))
+                    .font_weight(if is_remote {
+                        FontWeight::NORMAL
+                    } else {
+                        FontWeight::SEMIBOLD
+                    })
+                    .text_color(if is_remote {
+                        cx.theme().muted_foreground
+                    } else {
+                        cx.theme().primary
+                    })
+                    .on_mouse_down(MouseButton::Left, cx.listener(
+                        |this, _, _, cx| {
+                            this.selected_monitoring_tab = MonitoringTab::CustomCommands;
+                            cx.notify();
+                        },
+                    ))
+                    .child(t!("custom_commands")),
+            )
+            .child(div().flex_1())
+            .when(!is_remote, |this| {
+                this.child(
+                    Button::new("cmd-add")
+                        .ghost()
+                        .xsmall()
+                        .icon(IconName::Plus)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.show_custom_command_dialog(None, window, cx);
+                        })),
+                )
+            });
+
+        let monitoring_panel = v_flex()
+            .size_full()
+            .child(shared_header)
+            .child(if is_remote {
+                self.render_sftp_panel(window, cx).into_any_element()
+            } else {
+                self.render_custom_commands_content(window, cx).into_any_element()
+            });
+
         let monitoring_contents = v_flex()
             .size_full()
             .when(self.config.monitoring_position() == "Bottom", |this| {
                 this.child(self.render_monitoring_panel(window.viewport_size().width, cx))
             })
-            .child(self.render_sftp_panel(window, cx));
+            .child(monitoring_panel);
 
         let is_monitor_bottom = self.config.monitoring_position() == "Bottom";
         let minimized_height = if is_monitor_bottom { 114. } else { 34. };
