@@ -1,7 +1,7 @@
 
 use gpui::{
     Context, ElementId, Focusable as _, FontWeight, Hsla, InteractiveElement as _,
-    IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
+    IntoElement, MouseButton, MouseDownEvent,
     ParentElement as _, PathBuilder, Pixels, Render,
     StatefulInteractiveElement as _, Styled as _, Window,
     canvas, div, point, prelude::FluentBuilder as _, px, rems, uniform_list,
@@ -1206,7 +1206,7 @@ impl Ashell {
                                     .size_full()
                                     .id("saved-sessions-scroll")
                                     .track_scroll(&self.saved_scroll_handle)
-                                    .overflow_y_scroll()
+                .overflow_y_scrollbar()
                                     .gap_2()
                                     .children(sessions.into_iter().enumerate().map(
                                         |(ix, session)| {
@@ -1547,14 +1547,15 @@ impl Render for Ashell {
                             .min_h(px(0.))
                             .child(
                                 div()
-                                    .flex(7.)
-                                    .min_w(px(0.))
+                                    .flex_1()
+                                    .min_w(px(200.))
                                     .child(self.render_sftp_panel(window, cx)),
                             )
                             .child(
                                 div()
-                                    .flex(3.)
-                                    .min_w(px(180.))
+                                    .flex_1()
+                                    .min_w(px(200.))
+                                    .max_w(px(380.))
                                     .child(self.render_custom_commands_panel(window, cx)),
                             ),
                     ),

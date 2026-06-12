@@ -87,13 +87,13 @@ impl SystemSampler {
         let rx_total: u64 = self
             .nets
             .iter()
-            .filter(|(n, _)| self.selected_nic.as_deref().map_or(true, |sel| n == sel))
+            .filter(|(n, _)| self.selected_nic.as_deref().map_or(true, |sel| n.as_str() == sel))
             .map(|(_, d)| d.total_received())
             .sum();
         let tx_total: u64 = self
             .nets
             .iter()
-            .filter(|(n, _)| self.selected_nic.as_deref().map_or(true, |sel| n == sel))
+            .filter(|(n, _)| self.selected_nic.as_deref().map_or(true, |sel| n.as_str() == sel))
             .map(|(_, d)| d.total_transmitted())
             .sum();
         let now = Instant::now();
@@ -155,13 +155,13 @@ impl SystemSampler {
         let rx_total: u64 = self
             .nets
             .iter()
-            .filter(|(n, _)| self.selected_nic.as_deref().map_or(true, |sel| n == sel))
+            .filter(|(n, _)| self.selected_nic.as_deref().map_or(true, |sel| n.as_str() == sel))
             .map(|(_, d)| d.total_received())
             .sum();
         let tx_total: u64 = self
             .nets
             .iter()
-            .filter(|(n, _)| self.selected_nic.as_deref().map_or(true, |sel| n == sel))
+            .filter(|(n, _)| self.selected_nic.as_deref().map_or(true, |sel| n.as_str() == sel))
             .map(|(_, d)| d.total_transmitted())
             .sum();
         self.last_rx_total = rx_total;

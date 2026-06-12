@@ -130,7 +130,7 @@ pub(crate) struct Ashell {
     pub(crate) sftp_creating_folder: bool,
     pub(crate) sftp_new_folder_input: Entity<InputState>,
     pub(crate) sftp_delete_scroll_handle: gpui::ScrollHandle,
-    pub(crate) custom_commands: Vec<config::CustomCommand>,
+    pub(crate) custom_commands: Vec<crate::config::CustomCommand>,
     pub(crate) selected_command_index: usize,
     pub(crate) custom_command_input: Entity<InputState>,
     pub(crate) commands_focus_handle: FocusHandle,
@@ -398,7 +398,7 @@ impl Ashell {
                         .next()
                         .unwrap_or(&trimmed)
                         .to_string();
-                    self.custom_commands.push(config::CustomCommand {
+                    self.custom_commands.push(crate::config::CustomCommand {
                         id: uuid::Uuid::new_v4().to_string(),
                         name,
                         command_string: trimmed,
