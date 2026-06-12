@@ -1,0 +1,40 @@
+name: Build Windows Release (Pure Rust)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-2025
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Rust toolchain
+      uses: moonrepo/setup-rust@v1
+      with:
+        channel: stable
+        targets: x86_64-pc-windows-msvc
+
+    - name: Cache Cargo packages
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Build Rust Standalone
+      # 开启原生最高效的稀疏索引协议，直接向官方服务器拉取，不需要经过任何第三方中转
+      env:
+        CARGO_REGISTRIES_CRATES_IO_PROTOCOL: "sparse"
+      run: |
+        cargo build --release
+
+    - name: Upload Build Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ashell-windows-exe
+        path: target/release/*.exe
