@@ -648,12 +648,14 @@ impl Ashell {
                 )
                 .into_any_element()
         } else {
-            div()
+            v_flex()
                 .flex_1()
                 .min_h(px(0.))
                 .overflow_y_scroll()
                 .track_scroll(&self.commands_scroll_handle)
-                .child(v_flex().gap_0().w_full().children(items))
+                .gap_0()
+                .w_full()
+                .children(items)
                 .into_any_element()
         };
 

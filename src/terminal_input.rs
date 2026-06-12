@@ -338,8 +338,12 @@ impl Ashell {
                 cx.stop_propagation();
             }
             "Enter" => {
-                if let Some(cmd) = self.custom_commands.get(self.selected_command_index) {
-                    self.execute_command_string(&cmd.command_string, window, cx);
+                let cmd_str = self
+                    .custom_commands
+                    .get(self.selected_command_index)
+                    .map(|c| c.command_string.clone());
+                if let Some(cmd) = cmd_str {
+                    self.execute_command_string(&cmd, window, cx);
                 }
                 window.prevent_default();
                 cx.stop_propagation();
