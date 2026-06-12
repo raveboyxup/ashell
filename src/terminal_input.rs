@@ -103,7 +103,7 @@ impl Ashell {
         self.send_terminal_input(b"\x1b[Z".to_vec(), window, cx);
     }
 
-    fn send_terminal_input(&mut self, bytes: Vec<u8>, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn send_terminal_input(&mut self, bytes: Vec<u8>, window: &mut Window, cx: &mut Context<Self>) {
         let Some(active_id) = self.active_tab.clone() else {
             return;
         };
@@ -293,6 +293,61 @@ impl Ashell {
         cx.notify();
     }
 
+    pub(crate) fn execute_command_string(
+        &mut self,
+        cmd: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut bytes = cmd.as_bytes().to_vec();
+        bytes.push(b'\n');
+        self.send_terminal_input(bytes, window, cx);
+    }
+
+    pub(crate) fn focus_commands_panel(
+        &mut self,
+        _: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.commands_focus_handle.focus(window, cx);
+        cx.notify();
+    }
+
+    pub(crate) fn on_commands_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event.keystroke.key.as_str() {
+            "ArrowUp" => {
+                self.selected_command_index = self
+                    .selected_command_index
+                    .saturating_sub(1);
+                cx.notify();
+                window.prevent_default();
+                cx.stop_propagation();
+            }
+            "ArrowDown" => {
+                if self.selected_command_index + 1 < self.custom_commands.len() {
+                    self.selected_command_index += 1;
+                    cx.notify();
+                }
+                window.prevent_default();
+                cx.stop_propagation();
+            }
+            "Enter" => {
+                if let Some(cmd) = self.custom_commands.get(self.selected_command_index) {
+                    self.execute_command_string(&cmd.command_string, window, cx);
+                }
+                window.prevent_default();
+                cx.stop_propagation();
+            }
+            _ => {}
+        }
+    }
+
     fn terminal_grid_point_and_side(
         &self,
         position: Point<Pixels>,
@@ -341,6 +396,18 @@ impl Ashell {
             tab.scroll_history(delta_lines);
             window.prevent_default();
             cx.stop_propagation();
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn remove_custom_command(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index < self.custom_commands.len() {
+            self.custom_commands.remove(index);
+            if self.selected_command_index >= self.custom_commands.len() {
+                self.selected_command_index = self.custom_commands.len().saturating_sub(1);
+            }
+            self.config.set_custom_commands(self.custom_commands.clone());
+            let _ = self.config.save();
             cx.notify();
         }
     }

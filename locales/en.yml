@@ -109,3 +109,7 @@ copy_paste_hint: "Tip: Regardless of this switch, you can always use %{key} + C/
 edit_file: "Edit File"
 edit_file_tooltip: "Download to temporary directory, open in default editor, and auto upload on save."
 auto_saved_and_uploaded: "Auto-saved & uploaded: %{base}"
+
+custom_commands: "CUSTOM COMMANDS"
+no_custom_commands: "No custom commands yet. Type one below."
+type_command_hint: "e.g. 'ls -la'"

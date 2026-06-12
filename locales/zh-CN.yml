@@ -111,3 +111,7 @@ copy_paste_hint: "提示：不管是否开启此开关，都可以使用 %{key} 
 edit_file: "编辑文件"
 edit_file_tooltip: "下载到临时目录，使用默认编辑器打开，并在保存后自动上传。"
 auto_saved_and_uploaded: "已自动保存并上传: %{base}"
+
+custom_commands: "快捷命令"
+no_custom_commands: "暂无快捷命令，请在下方输入。"
+type_command_hint: "例如 'ls -la'"

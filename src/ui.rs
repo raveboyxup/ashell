@@ -1,7 +1,7 @@
 
 use gpui::{
     Context, ElementId, Focusable as _, FontWeight, Hsla, InteractiveElement as _,
-    IntoElement, MouseButton, MouseDownEvent,
+    IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
     ParentElement as _, PathBuilder, Pixels, Render,
     StatefulInteractiveElement as _, Styled as _, Window,
     canvas, div, point, prelude::FluentBuilder as _, px, rems, uniform_list,
@@ -537,6 +537,152 @@ impl Ashell {
                     ),
             )
             .into_any_element()
+    }
+
+    fn render_custom_commands_panel(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let view = cx.entity();
+        let header = h_flex()
+            .flex_none()
+            .h(px(34.))
+            .items_center()
+            .gap_2()
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().tab_bar)
+            .child(
+                div()
+                    .text_size(rems(1.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(cx.theme().primary)
+                    .child(t!("custom_commands")),
+            );
+
+        let items = self
+            .custom_commands
+            .iter()
+            .enumerate()
+            .map(|(ix, cmd)| {
+                let is_selected = ix == self.selected_command_index;
+                let bg = if is_selected {
+                    cx.theme().secondary
+                } else if ix % 2 == 0 {
+                    cx.theme().background
+                } else {
+                    cx.theme().muted.opacity(0.5)
+                };
+                let cmd_str = cmd.command_string.clone();
+                div()
+                    .id(("custom-cmd", ix))
+                    .w_full()
+                    .h(px(32.))
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .bg(bg)
+                    .hover(|style| style.bg(cx.theme().muted))
+                    .border_b_1()
+                    .border_color(cx.theme().border.opacity(0.35))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        window.listener_for(&view, move |this, _, window, cx| {
+                            this.commands_focus_handle.focus(window, cx);
+                            this.selected_command_index = ix;
+                            if this.custom_commands.get(ix).is_some() {
+                                this.execute_command_string(&cmd_str, window, cx);
+                            }
+                            cx.notify();
+                        }),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .overflow_hidden()
+                            .text_size(rems(0.917))
+                            .text_color(if is_selected {
+                                cx.theme().primary
+                            } else {
+                                cx.theme().foreground
+                            })
+                            .child(format!("{}  —  {}", cmd.name, cmd.command_string)),
+                    )
+                    .child(
+                        Button::new(("cmd-run", ix))
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::ArrowRight)
+                            .on_click({
+                                let cmd_str = cmd.command_string.clone();
+                                cx.listener(move |this, _, window, cx| {
+                                    this.execute_command_string(&cmd_str, window, cx);
+                                })
+                            }),
+                    )
+                    .child(
+                        Button::new(("cmd-delete", ix))
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::Close)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.remove_custom_command(ix, cx);
+                            })),
+                    )
+                    .into_any_element()
+            })
+            .collect::<Vec<_>>();
+
+        let command_list = if items.is_empty() {
+            v_flex()
+                .flex_1()
+                .items_center()
+                .justify_center()
+                .child(
+                    div()
+                        .text_size(rems(0.917))
+                        .text_color(cx.theme().muted_foreground)
+                        .child(t!("no_custom_commands")),
+                )
+                .into_any_element()
+        } else {
+            div()
+                .flex_1()
+                .min_h(px(0.))
+                .overflow_y_scroll()
+                .track_scroll(&self.commands_scroll_handle)
+                .child(v_flex().gap_0().w_full().children(items))
+                .into_any_element()
+        };
+
+        let bottom = h_flex()
+            .flex_none()
+            .h(px(34.))
+            .px_2()
+            .items_center()
+            .gap_2()
+            .border_t_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().tab_bar)
+            .child(Input::new(&self.custom_command_input).flex_1().tab_index(0));
+
+        v_flex()
+            .size_full()
+            .gap_0()
+            .border_color(cx.theme().border)
+            .border_l_1()
+            .bg(cx.theme().background)
+            .track_focus(&self.commands_focus_handle)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(Self::focus_commands_panel),
+            )
+            .on_key_down(cx.listener(Self::on_commands_key_down))
+            .child(header)
+            .child(command_list)
+            .child(bottom)
     }
 
     fn render_monitoring_panel(
@@ -1373,7 +1519,23 @@ impl Render for Ashell {
                 v_flex()
                     .size_full()
                     .child(self.render_monitoring_panel(window.viewport_size().width, cx))
-                    .child(self.render_sftp_panel(window, cx)),
+                    .child(
+                        h_flex()
+                            .flex_1()
+                            .min_h(px(0.))
+                            .child(
+                                div()
+                                    .flex(7.)
+                                    .min_w(px(0.))
+                                    .child(self.render_sftp_panel(window, cx)),
+                            )
+                            .child(
+                                div()
+                                    .flex(3.)
+                                    .min_w(px(180.))
+                                    .child(self.render_custom_commands_panel(window, cx)),
+                            ),
+                    ),
             );
 
         let body_panel = v_resizable("ashell-body")

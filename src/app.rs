@@ -130,6 +130,11 @@ pub(crate) struct Ashell {
     pub(crate) sftp_creating_folder: bool,
     pub(crate) sftp_new_folder_input: Entity<InputState>,
     pub(crate) sftp_delete_scroll_handle: gpui::ScrollHandle,
+    pub(crate) custom_commands: Vec<config::CustomCommand>,
+    pub(crate) selected_command_index: usize,
+    pub(crate) custom_command_input: Entity<InputState>,
+    pub(crate) commands_focus_handle: FocusHandle,
+    pub(crate) commands_scroll_handle: gpui::ScrollHandle,
     pub(crate) show_hidden_files: bool,
     pub(crate) transfers: Vec<crate::terminal::Transfer>,
     pub(crate) show_transfers_dialog: bool,
@@ -198,6 +203,10 @@ impl Ashell {
         });
         let sftp_path_input = cx.new(|cx| InputState::new(window, cx).default_value("/"));
         let sftp_new_folder_input = cx.new(|cx| InputState::new(window, cx).placeholder(t!("new_folder").to_string()));
+        let custom_command_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(t!("type_command_hint").to_string())
+        });
 
         let _subscriptions = vec![
             cx.subscribe_in(&host_input, window, Self::on_input_event),
@@ -209,6 +218,7 @@ impl Ashell {
             cx.subscribe_in(&key_inline_input, window, Self::on_input_event),
             cx.subscribe_in(&sftp_path_input, window, Self::on_input_event),
             cx.subscribe_in(&sftp_new_folder_input, window, Self::on_input_event),
+            cx.subscribe_in(&custom_command_input, window, Self::on_input_event),
         ];
 
         let (events_tx, events_rx) = mpsc::channel();
@@ -297,6 +307,11 @@ impl Ashell {
             sftp_creating_folder: false,
             sftp_new_folder_input,
             sftp_delete_scroll_handle: gpui::ScrollHandle::new(),
+            custom_commands: config.custom_commands().to_vec(),
+            selected_command_index: 0,
+            custom_command_input,
+            commands_focus_handle: cx.focus_handle(),
+            commands_scroll_handle: gpui::ScrollHandle::new(),
             show_hidden_files: config.show_hidden_files(),
             transfers: config.transfers(),
             show_transfers_dialog: false,
@@ -368,6 +383,35 @@ impl Ashell {
                     self.sftp_creating_folder = false;
                 }
                 _ => {}
+            }
+        } else if input == &self.custom_command_input {
+            if let InputEvent::PressEnter { .. } = event {
+                let text = self
+                    .custom_command_input
+                    .read(cx)
+                    .text()
+                    .to_string();
+                let trimmed = text.trim().to_string();
+                if !trimmed.is_empty() {
+                    let name = trimmed
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or(&trimmed)
+                        .to_string();
+                    self.custom_commands.push(config::CustomCommand {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        name,
+                        command_string: trimmed,
+                    });
+                    self.selected_command_index = self.custom_commands.len().saturating_sub(1);
+                    self.custom_command_input.update(cx, |input, cx| {
+                        input.set_value("", window, cx);
+                    });
+                    self.config.set_custom_commands(self.custom_commands.clone());
+                    let _ = self.config.save();
+                }
+                window.prevent_default();
+                cx.stop_propagation();
             }
         }
         cx.notify();

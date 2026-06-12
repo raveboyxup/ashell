@@ -5,6 +5,13 @@ use directories::BaseDirs;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomCommand {
+    pub id: String,
+    pub name: String,
+    pub command_string: String,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum AuthMethod {
@@ -127,6 +134,8 @@ pub struct ConfigFile {
     pub transfers: Vec<crate::terminal::Transfer>,
     #[serde(default)]
     pub show_hidden_files: bool,
+    #[serde(default)]
+    pub custom_commands: Vec<CustomCommand>,
 }
 
 fn default_locale() -> String {
@@ -339,6 +348,14 @@ impl ConfigStore {
 
     pub fn set_show_hidden_files(&mut self, val: bool) {
         self.cache.show_hidden_files = val;
+    }
+
+    pub fn custom_commands(&self) -> &[CustomCommand] {
+        &self.cache.custom_commands
+    }
+
+    pub fn set_custom_commands(&mut self, cmds: Vec<CustomCommand>) {
+        self.cache.custom_commands = cmds;
     }
 
     pub fn get(&self, id: &str) -> Option<&Session> {
