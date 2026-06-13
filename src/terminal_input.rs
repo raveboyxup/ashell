@@ -9,6 +9,7 @@ use gpui::{
 
 use crate::{
     Ashell,
+    config::CommandItem,
     terminal::{BackendCommand, encode_key},
     TerminalBacktabKey, TerminalTabKey,
 };
@@ -322,16 +323,16 @@ impl Ashell {
     ) {
         match event.keystroke.key.as_str() {
             "ArrowUp" => {
-                self.selected_command_index = self
-                    .selected_command_index
+                self.command_flat_selection = self
+                    .command_flat_selection
                     .saturating_sub(1);
                 cx.notify();
                 window.prevent_default();
                 cx.stop_propagation();
             }
             "ArrowDown" => {
-                if self.selected_command_index + 1 < self.custom_commands.len() {
-                    self.selected_command_index += 1;
+                if self.command_flat_selection + 1 < self.command_tree.len() {
+                    self.command_flat_selection += 1;
                     cx.notify();
                 }
                 window.prevent_default();
@@ -339,9 +340,12 @@ impl Ashell {
             }
             "Enter" => {
                 let cmd_str = self
-                    .custom_commands
-                    .get(self.selected_command_index)
-                    .map(|c| c.command_string.clone());
+                    .command_tree
+                    .get(self.command_flat_selection)
+                    .and_then(|c| match c {
+                        CommandItem::Command(cmd) => Some(cmd.command_string.clone()),
+                        CommandItem::Folder(_) => None,
+                    });
                 if let Some(cmd) = cmd_str {
                     self.execute_command_string(&cmd, window, cx);
                 }
@@ -405,12 +409,12 @@ impl Ashell {
     }
 
     pub(crate) fn remove_custom_command(&mut self, index: usize, cx: &mut Context<Self>) {
-        if index < self.custom_commands.len() {
-            self.custom_commands.remove(index);
-            if self.selected_command_index >= self.custom_commands.len() {
-                self.selected_command_index = self.custom_commands.len().saturating_sub(1);
+        if index < self.command_tree.len() {
+            self.command_tree.remove(index);
+            if self.command_flat_selection >= self.command_tree.len() {
+                self.command_flat_selection = self.command_tree.len().saturating_sub(1);
             }
-            self.config.set_custom_commands(self.custom_commands.clone());
+            self.config.set_custom_commands(self.command_tree.clone());
             let _ = self.config.save();
             cx.notify();
         }

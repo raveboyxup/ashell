@@ -23,6 +23,7 @@ use rust_i18n::t;
 
 use crate::{
     Ashell, MonitoringTab, SIDEBAR_WIDTH, TERMINAL_KEY_CONTEXT,
+    config::CommandItem,
     sftp_ops::is_editable_text_file,
     sftp::format_mtime,
     system::format_bytes,
@@ -416,11 +417,11 @@ impl Ashell {
     ) -> impl IntoElement {
         let view = cx.entity();
         let items = self
-            .custom_commands
+            .command_tree
             .iter()
             .enumerate()
             .map(|(ix, cmd)| {
-                let is_selected = ix == self.selected_command_index;
+                let is_selected = ix == self.command_flat_selection;
                 let bg = if is_selected {
                     cx.theme().secondary
                 } else if ix % 2 == 0 {
@@ -428,8 +429,10 @@ impl Ashell {
                 } else {
                     cx.theme().muted.opacity(0.5)
                 };
-                let cmd_str = cmd.command_string.clone();
-                let cmd_id = cmd.id.clone();
+                let (cmd_str, cmd_name) = match cmd {
+                    CommandItem::Command(c) => (c.command_string.clone(), c.name.clone()),
+                    CommandItem::Folder(f) => (String::new(), f.name.clone()),
+                };
                 div()
                     .id(("custom-cmd", ix))
                     .w_full()
@@ -443,13 +446,16 @@ impl Ashell {
                     .border_color(cx.theme().border.opacity(0.35))
                     .on_mouse_down(
                         MouseButton::Left,
-                        window.listener_for(&view, move |this, _, window, cx| {
-                            this.selected_command_index = ix;
-                            if this.custom_commands.get(ix).is_some() {
-                                this.execute_command_string(&cmd_str, window, cx);
-                            }
-                            cx.notify();
-                        }),
+                        {
+                            let cmd_str = cmd_str.clone();
+                            window.listener_for(&view, move |this, _, window, cx| {
+                                this.command_flat_selection = ix;
+                                if this.command_tree.get(ix).is_some() {
+                                    this.execute_command_string(&cmd_str, window, cx);
+                                }
+                                cx.notify();
+                            })
+                        },
                     )
                     .context_menu({
                         let view = cx.entity();
@@ -481,7 +487,7 @@ impl Ashell {
                             } else {
                                 cx.theme().foreground
                             })
-                            .child(format!("{}  —  {}", cmd.name, cmd.command_string)),
+                            .child(format!("{}  —  {}", cmd_name, cmd_str)),
                     )
                     .child(
                         Button::new(("cmd-run", ix))
@@ -489,7 +495,7 @@ impl Ashell {
                             .xsmall()
                             .icon(IconName::ArrowRight)
                             .on_click({
-                                let cmd_str = cmd.command_string.clone();
+                                let cmd_str = cmd_str.clone();
                                 cx.listener(move |this, _, window, cx| {
                                     this.execute_command_string(&cmd_str, window, cx);
                                 })

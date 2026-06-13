@@ -6,10 +6,45 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CustomCommand {
+pub struct CommandEntry {
     pub id: String,
     pub name: String,
     pub command_string: String,
+    pub append_cr: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandFolder {
+    pub id: String,
+    pub name: String,
+    pub children: Vec<CommandItem>,
+    pub is_expanded: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum CommandItem {
+    Folder(CommandFolder),
+    Command(CommandEntry),
+}
+
+impl CommandItem {
+    pub fn name(&self) -> &str {
+        match self {
+            CommandItem::Folder(f) => &f.name,
+            CommandItem::Command(c) => &c.name,
+        }
+    }
+
+    pub fn id(&self) -> &str {
+        match self {
+            CommandItem::Folder(f) => &f.id,
+            CommandItem::Command(c) => &c.id,
+        }
+    }
+
+    pub fn is_folder(&self) -> bool {
+        matches!(self, CommandItem::Folder(_))
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -135,7 +170,7 @@ pub struct ConfigFile {
     #[serde(default)]
     pub show_hidden_files: bool,
     #[serde(default)]
-    pub custom_commands: Vec<CustomCommand>,
+    pub custom_commands: Vec<CommandItem>,
 }
 
 fn default_locale() -> String {
@@ -350,11 +385,11 @@ impl ConfigStore {
         self.cache.show_hidden_files = val;
     }
 
-    pub fn custom_commands(&self) -> &[CustomCommand] {
+    pub fn custom_commands(&self) -> &[CommandItem] {
         &self.cache.custom_commands
     }
 
-    pub fn set_custom_commands(&mut self, cmds: Vec<CustomCommand>) {
+    pub fn set_custom_commands(&mut self, cmds: Vec<CommandItem>) {
         self.cache.custom_commands = cmds;
     }
 

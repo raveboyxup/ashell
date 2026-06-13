@@ -104,6 +104,70 @@ impl ScrollbarHandle for TerminalScrollbarHandle {
 
 
 
+#[derive(Debug, Clone)]
+pub(crate) struct FlatCommandItem {
+    pub(crate) depth: usize,
+    pub(crate) is_folder: bool,
+    pub(crate) is_expanded: bool,
+    pub(crate) path: Vec<usize>,
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) cmd: Option<String>,
+    pub(crate) append_cr: bool,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CommandContextMenu {
+    pub(crate) position: gpui::Point<Pixels>,
+}
+
+pub(crate) fn flatten_command_tree(items: &[crate::config::CommandItem]) -> Vec<FlatCommandItem> {
+    let mut result = Vec::new();
+    flatten_recursive(items, &mut Vec::new(), &mut result, 0);
+    result
+}
+
+fn flatten_recursive(
+    items: &[crate::config::CommandItem],
+    parent_path: &mut Vec<usize>,
+    result: &mut Vec<FlatCommandItem>,
+    depth: usize,
+) {
+    for (i, item) in items.iter().enumerate() {
+        parent_path.push(i);
+        match item {
+            crate::config::CommandItem::Folder(f) => {
+                result.push(FlatCommandItem {
+                    depth,
+                    is_folder: true,
+                    is_expanded: f.is_expanded,
+                    path: parent_path.clone(),
+                    id: f.id.clone(),
+                    name: f.name.clone(),
+                    cmd: None,
+                    append_cr: false,
+                });
+                if f.is_expanded {
+                    flatten_recursive(&f.children, parent_path, result, depth + 1);
+                }
+            }
+            crate::config::CommandItem::Command(c) => {
+                result.push(FlatCommandItem {
+                    depth,
+                    is_folder: false,
+                    is_expanded: false,
+                    path: parent_path.clone(),
+                    id: c.id.clone(),
+                    name: c.name.clone(),
+                    cmd: Some(c.command_string.clone()),
+                    append_cr: c.append_cr,
+                });
+            }
+        }
+        parent_path.pop();
+    }
+}
+
 pub(crate) struct Ashell {
     pub(crate) focus_handle: FocusHandle,
     pub(crate) selector_focus_handle: FocusHandle,
@@ -142,14 +206,24 @@ pub(crate) struct Ashell {
     pub(crate) sftp_creating_folder: bool,
     pub(crate) sftp_new_folder_input: Entity<InputState>,
     pub(crate) sftp_delete_scroll_handle: gpui::ScrollHandle,
-    pub(crate) custom_commands: Vec<crate::config::CustomCommand>,
-    pub(crate) selected_command_index: usize,
+    pub(crate) command_tree: Vec<crate::config::CommandItem>,
+    pub(crate) command_flat_selection: usize,
+    pub(crate) command_flat_items: Vec<FlatCommandItem>,
     pub(crate) custom_command_input: Entity<InputState>,
     pub(crate) command_dialog_name_input: Entity<InputState>,
     pub(crate) command_dialog_cmd_input: Entity<InputState>,
     pub(crate) commands_focus_handle: FocusHandle,
     pub(crate) commands_scroll_handle: gpui::ScrollHandle,
     pub(crate) selected_monitoring_tab: MonitoringTab,
+    pub(crate) command_context_menu: Option<CommandContextMenu>,
+    pub(crate) show_new_folder_dialog: bool,
+    pub(crate) new_folder_name_input: Entity<InputState>,
+    pub(crate) show_command_editor: bool,
+    pub(crate) editing_command_parent_path: Vec<usize>,
+    pub(crate) editing_command_index: Option<usize>,
+    pub(crate) editor_send_to_all: bool,
+    pub(crate) editor_append_cr: bool,
+    pub(crate) editor_clear_after_send: bool,
 
     pub(crate) show_hidden_files: bool,
     pub(crate) transfers: Vec<crate::terminal::Transfer>,
@@ -229,6 +303,9 @@ impl Ashell {
         let command_dialog_cmd_input = cx.new(|cx| {
             InputState::new(window, cx).placeholder(t!("command_string").to_string())
         });
+        let new_folder_name_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(t!("folder_name").to_string())
+        });
 
         let _subscriptions = vec![
             cx.subscribe_in(&host_input, window, Self::on_input_event),
@@ -241,6 +318,7 @@ impl Ashell {
             cx.subscribe_in(&sftp_path_input, window, Self::on_input_event),
             cx.subscribe_in(&sftp_new_folder_input, window, Self::on_input_event),
             cx.subscribe_in(&custom_command_input, window, Self::on_input_event),
+            cx.subscribe_in(&new_folder_name_input, window, Self::on_input_event),
         ];
 
         let (events_tx, events_rx) = mpsc::channel();
@@ -329,14 +407,24 @@ impl Ashell {
             sftp_creating_folder: false,
             sftp_new_folder_input,
             sftp_delete_scroll_handle: gpui::ScrollHandle::new(),
-            custom_commands: config.custom_commands().to_vec(),
-            selected_command_index: 0,
+            command_tree: config.custom_commands().to_vec(),
+            command_flat_selection: 0,
+            command_flat_items: Vec::new(),
             custom_command_input,
             command_dialog_name_input,
             command_dialog_cmd_input,
             commands_focus_handle: cx.focus_handle(),
             commands_scroll_handle: gpui::ScrollHandle::new(),
             selected_monitoring_tab: MonitoringTab::RemoteFiles,
+            command_context_menu: None,
+            show_new_folder_dialog: false,
+            new_folder_name_input,
+            show_command_editor: false,
+            editing_command_parent_path: Vec::new(),
+            editing_command_index: None,
+            editor_send_to_all: false,
+            editor_append_cr: true,
+            editor_clear_after_send: false,
             show_hidden_files: config.show_hidden_files(),
             transfers: config.transfers(),
             show_transfers_dialog: false,
@@ -361,6 +449,7 @@ impl Ashell {
             _subscriptions,
         };
 
+        this.command_flat_items = flatten_command_tree(&this.command_tree);
         this.apply_theme_preferences(window, cx);
         // this.open_local(cx);
         this.start_event_pump(cx);
@@ -423,16 +512,17 @@ impl Ashell {
                         .next()
                         .unwrap_or(&trimmed)
                         .to_string();
-                    self.custom_commands.push(crate::config::CustomCommand {
+                    self.command_tree.push(crate::config::CommandItem::Command(crate::config::CommandEntry {
                         id: uuid::Uuid::new_v4().to_string(),
                         name,
                         command_string: trimmed,
-                    });
-                    self.selected_command_index = self.custom_commands.len().saturating_sub(1);
+                        append_cr: true,
+                    }));
+                    self.command_flat_selection = self.command_tree.len().saturating_sub(1);
                     self.custom_command_input.update(cx, |input, cx| {
                         input.set_value("", window, cx);
                     });
-                    self.config.set_custom_commands(self.custom_commands.clone());
+                    self.config.set_custom_commands(self.command_tree.clone());
                     let _ = self.config.save();
                 }
                 window.prevent_default();

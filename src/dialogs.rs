@@ -19,7 +19,7 @@ use rust_i18n::t;
 
 use crate::{
     Ashell,
-    config::{AuthMethod, CustomCommand},
+    config::{AuthMethod, CommandEntry, CommandItem},
     system::format_bytes,
 };
 
@@ -1265,12 +1265,15 @@ impl Ashell {
         let name_input = self.command_dialog_name_input.clone();
         let cmd_input = self.command_dialog_cmd_input.clone();
         let name = edit_index
-            .and_then(|i| self.custom_commands.get(i))
-            .map(|c| c.name.clone())
+            .and_then(|i| self.command_tree.get(i))
+            .map(|c| c.name().to_string())
             .unwrap_or_default();
         let command = edit_index
-            .and_then(|i| self.custom_commands.get(i))
-            .map(|c| c.command_string.clone())
+            .and_then(|i| self.command_tree.get(i))
+            .and_then(|c| match c {
+                CommandItem::Command(cmd) => Some(cmd.command_string.clone()),
+                CommandItem::Folder(_) => None,
+            })
             .unwrap_or_default();
         name_input.update(cx, |input, cx| {
             input.set_value(&name, window, cx);
@@ -1356,23 +1359,21 @@ impl Ashell {
                                                         let c = cmd_input.read(cx).text().to_string();
                                                         if !n.is_empty() && !c.is_empty() {
                                                             let _ = view.update(cx, |this, cx| {
-                                                                let cmd = CustomCommand {
+                                                                let cmd = CommandEntry {
                                                                     id: uuid::Uuid::new_v4().to_string(),
                                                                     name: n,
                                                                     command_string: c,
+                                                                    append_cr: true,
                                                                 };
                                                                 if let Some(idx) = edit_index {
-                                                                    if idx < this.custom_commands.len() {
-                                                                        let mut existing = this.custom_commands[idx].clone();
-                                                                        existing.name = cmd.name.clone();
-                                                                        existing.command_string = cmd.command_string.clone();
-                                                                        this.custom_commands[idx] = existing;
+                                                                    if idx < this.command_tree.len() {
+                                                                        this.command_tree[idx] = CommandItem::Command(cmd);
                                                                     }
                                                                 } else {
-                                                                    this.custom_commands.push(cmd);
-                                                                    this.selected_command_index = this.custom_commands.len().saturating_sub(1);
+                                                                    this.command_tree.push(CommandItem::Command(cmd));
+                                                                    this.command_flat_selection = this.command_tree.len().saturating_sub(1);
                                                                 }
-                                                                this.config.set_custom_commands(this.custom_commands.clone());
+                                                                this.config.set_custom_commands(this.command_tree.clone());
                                                                 let _ = this.config.save();
                                                                 cx.notify();
                                                             });
