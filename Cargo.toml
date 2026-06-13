@@ -16,8 +16,8 @@ directories = "5"
 flate2 = "1"
 gpui = { git = "https://github.com/zed-industries/zed" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit", "runtime_shaders"] }
-gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "ca85b5588f5feea021f1ee86cb13703dc6f30ec4" }
-gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "ca85b5588f5feea021f1ee86cb13703dc6f30ec4" }
+gpui-component = { git = "https://github.com/longbridge/gpui-component" }
+gpui-component-assets = { git = "https://github.com/longbridge/gpui-component" }
 menu = { git = "https://github.com/zed-industries/zed" }
 portable-pty = "0.8"
 rfd = "0.15"
