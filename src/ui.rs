@@ -70,152 +70,24 @@ impl Ashell {
             )
     }
 
-    fn render_sftp_panel(
+    fn render_sftp_content(
         &mut self,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let active_sftp = self.active_sftp();
 
-        let header = h_flex()
-            .flex_none()
-            .h(px(34.))
-            .items_center()
-                    .gap_2()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().tab_bar)
-            .child(
-                div()
-                    .text_size(rems(1.0))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(cx.theme().primary)
-                    .child(t!("remote_files")),
-            )
-            .child(div().flex_1())
-            .when_some(active_sftp.clone(), |this, sftp| {
-                let selected_entries = sftp.selected_entries.clone();
-                this.child(
-                    Button::new("sftp-refresh")
-                        .ghost()
-                        .small()
-                        .icon(IconName::ArrowRight)
-                        .label(t!("refresh").to_string())
-                        .on_click(cx.listener(|this, _, _, cx| this.refresh_sftp(cx))),
-                )
-                .child(
-                    Button::new("sftp-new-folder")
-                        .ghost()
-                        .small()
-                        .icon(IconName::Folder)
-                        .label(t!("new_folder").to_string())
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.sftp_creating_folder = true;
-                            this.sftp_new_folder_input.update(cx, |input, cx| {
-                                input.set_value("", window, cx);
-                                input.focus_handle(cx).focus(window, cx);
-                            });
-                            cx.notify();
-                        })),
-                )
-                .child(
-                    Button::new("sftp-delete-selected")
-                        .ghost()
-                        .small()
-                        .icon(IconName::Close)
-                        .label(if selected_entries.is_empty() {
-                            t!("delete_selected").to_string()
-                        } else {
-                            format!(
-                                "{} ({})",
-                                t!("delete_selected").to_string(),
-                                selected_entries.len()
-                            )
-                        })
-                        .disabled(selected_entries.is_empty())
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.show_delete_confirm_dialog(window, cx);
-                        })),
-                )
-                .child(
-                    Button::new("sftp-upload-file")
-                        .ghost()
-                        .small()
-                        .icon(IconName::Plus)
-                        .label(t!("upload_file").to_string())
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.upload_sftp_files(window, cx)),
-                        ),
-                )
-                .child(
-                    Button::new("sftp-upload-folder")
-                        .ghost()
-                        .small()
-                        .icon(IconName::Folder)
-                        .label(t!("upload_folder").to_string())
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.upload_sftp_folder(window, cx)),
-                        ),
-                )
-                .child(
-                    Button::new("sftp-download-selected")
-                        .ghost()
-                        .small()
-                        .icon(IconName::ArrowDown)
-                        .label(if selected_entries.is_empty() {
-                            t!("download").to_string()
-                        } else {
-                            t!("download_count", count = selected_entries.len()).to_string()
-                        })
-                        .disabled(selected_entries.is_empty())
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.download_selected_sftp_entries(window, cx);
-                        })),
-                )
-                .child(
-                    Checkbox::new("sftp-show-hidden")
-                        .small()
-                        .label(t!("hidden").to_string())
-                        .checked(self.show_hidden_files)
-                        .tab_stop(false)
-                        .on_click(cx.listener(|this, checked, _, cx| {
-                            this.show_hidden_files = *checked;
-                            this.config.set_show_hidden_files(*checked);
-                            let _ = this.config.save();
-                            cx.notify();
-                        })),
-                )
-            })
-            .child(
-                Button::new("open-transfers")
-                    .ghost()
-                    .small()
-                    .icon(IconName::ArrowDown)
-                    .label(t!("transfers").to_string())
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.show_transfers_dialog(window, cx);
-                    })),
-            );
-
         let Some(sftp) = active_sftp else {
             return v_flex()
-                .size_full()
-                .gap_0()
-                .border_color(cx.theme().border)
-                .bg(cx.theme().background)
-                .child(header)
+                .flex_1()
+                .items_center()
+                .justify_center()
+                .p_3()
                 .child(
-                    v_flex()
-                        .flex_1()
-                        .items_center()
-                        .justify_center()
-                        .p_3()
-                        .child(
-                            div()
-                                .text_size(rems(1.0))
-                                .text_color(cx.theme().muted_foreground)
-                                .child(t!("open_ssh_tab_sftp")),
-                        ),
+                    div()
+                        .text_size(rems(1.0))
+                        .text_color(cx.theme().muted_foreground)
+                        .child(t!("open_ssh_tab_sftp")),
                 )
                 .into_any_element();
         };
@@ -240,10 +112,9 @@ impl Ashell {
         let modified_col_width = px(152.);
 
         v_flex()
-            .size_full()
+            .flex_1()
+            .min_h(px(0.))
             .gap_0()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().background)
             .on_drop(
                 cx.listener(|this, paths: &gpui::ExternalPaths, _window, cx| {
                     let paths_to_upload: Vec<String> = paths
@@ -254,7 +125,6 @@ impl Ashell {
                     this.upload_sftp_files_batch(paths_to_upload, cx);
                 }),
             )
-            .child(header)
             .child(
                 h_flex()
                     .h(px(36.))
@@ -539,39 +409,12 @@ impl Ashell {
             .into_any_element()
     }
 
-    fn render_custom_commands_panel(
+    fn render_custom_commands_content(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let view = cx.entity();
-        let header = h_flex()
-            .flex_none()
-            .h(px(34.))
-            .items_center()
-            .px_3()
-            .gap_2()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().tab_bar)
-            .child(
-                div()
-                    .text_size(rems(1.0))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(cx.theme().primary)
-                    .child(t!("custom_commands")),
-            )
-            .child(div().flex_1())
-            .child(
-                Button::new("cmd-add")
-                    .ghost()
-                    .xsmall()
-                    .icon(IconName::Plus)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.show_custom_command_dialog(None, window, cx);
-                    })),
-            );
-
         let items = self
             .custom_commands
             .iter()
@@ -705,10 +548,9 @@ impl Ashell {
             .child(Input::new(&self.custom_command_input).flex_1());
 
         v_flex()
-            .size_full()
+            .flex_1()
+            .min_h(px(0.))
             .gap_0()
-            .border_color(cx.theme().border)
-            .border_l_1()
             .bg(cx.theme().background)
             .on_key_down(cx.listener(Self::on_commands_key_down))
             .context_menu({
@@ -723,7 +565,6 @@ impl Ashell {
                     )
                 }
             })
-            .child(header)
             .child(command_list)
             .child(bottom)
     }
@@ -1838,98 +1679,180 @@ impl Render for Ashell {
             .flex_none()
             .child(self.sidebar(cx));
 
-        let is_remote = matches!(
-            self.selected_monitoring_tab,
-            MonitoringTab::RemoteFiles
-        );
-        let is_commands = matches!(
-            self.selected_monitoring_tab,
-            MonitoringTab::CustomCommands
-        );
+        let is_remote = self.selected_monitoring_tab == MonitoringTab::RemoteFiles;
 
-        let tab_bar = h_flex()
+        let active_sftp = self.active_sftp();
+        let shared_header = h_flex()
             .flex_none()
             .h(px(34.))
+            .px_3()
             .items_center()
-            .gap_0()
+            .gap_2()
             .border_b_1()
             .border_color(cx.theme().border)
             .bg(cx.theme().tab_bar)
             .child(
-                h_flex()
-                    .h(px(34.))
-                    .px_3()
-                    .items_center()
+                div()
                     .cursor_pointer()
-                    .bg(if is_remote {
-                        cx.theme().background
+                    .text_size(rems(1.0))
+                    .font_weight(if is_remote {
+                        FontWeight::SEMIBOLD
                     } else {
-                        cx.theme().transparent
+                        FontWeight::NORMAL
+                    })
+                    .text_color(if is_remote {
+                        cx.theme().primary
+                    } else {
+                        cx.theme().muted_foreground
                     })
                     .on_mouse_down(MouseButton::Left, cx.listener(
                         |this, _, _, cx| {
-                            this.selected_monitoring_tab =
-                                MonitoringTab::RemoteFiles;
+                            this.selected_monitoring_tab = MonitoringTab::RemoteFiles;
                             cx.notify();
                         },
                     ))
-                    .child(
-                        div()
-                            .text_size(rems(1.0))
-                            .font_weight(if is_remote {
-                                FontWeight::SEMIBOLD
-                            } else {
-                                FontWeight::NORMAL
-                            })
-                            .text_color(if is_remote {
-                                cx.theme().primary
-                            } else {
-                                cx.theme().muted_foreground
-                            })
-                            .child(t!("remote_files")),
-                    ),
+                    .child(t!("remote_files")),
             )
             .child(
-                h_flex()
-                    .h(px(34.))
-                    .px_3()
-                    .items_center()
+                div()
                     .cursor_pointer()
-                    .bg(if is_commands {
-                        cx.theme().background
+                    .text_size(rems(1.0))
+                    .font_weight(if is_remote {
+                        FontWeight::NORMAL
                     } else {
-                        cx.theme().transparent
+                        FontWeight::SEMIBOLD
+                    })
+                    .text_color(if is_remote {
+                        cx.theme().muted_foreground
+                    } else {
+                        cx.theme().primary
                     })
                     .on_mouse_down(MouseButton::Left, cx.listener(
                         |this, _, _, cx| {
-                            this.selected_monitoring_tab =
-                                MonitoringTab::CustomCommands;
+                            this.selected_monitoring_tab = MonitoringTab::CustomCommands;
                             cx.notify();
                         },
                     ))
-                    .child(
-                        div()
-                            .text_size(rems(1.0))
-                            .font_weight(if is_commands {
-                                FontWeight::SEMIBOLD
-                            } else {
-                                FontWeight::NORMAL
-                            })
-                            .text_color(if is_commands {
-                                cx.theme().primary
-                            } else {
-                                cx.theme().muted_foreground
-                            })
-                            .child(t!("custom_commands")),
-                    ),
+                    .child(t!("custom_commands")),
             )
-            .child(div().flex_1());
-
-        let content: gpui::AnyElement = if is_remote {
-            self.render_sftp_panel(window, cx).into_any_element()
-        } else {
-            self.render_custom_commands_panel(window, cx).into_any_element()
-        };
+            .child(div().flex_1())
+            .when(is_remote, |this| {
+                let sftp = active_sftp.clone();
+                this.when_some(sftp, |this, sftp| {
+                    let selected_entries = sftp.selected_entries.clone();
+                    this.child(
+                        Button::new("sftp-refresh")
+                            .ghost()
+                            .small()
+                            .icon(IconName::ArrowRight)
+                            .label(t!("refresh").to_string())
+                            .on_click(cx.listener(|this, _, _, cx| this.refresh_sftp(cx))),
+                    )
+                    .child(
+                        Button::new("sftp-new-folder")
+                            .ghost()
+                            .small()
+                            .icon(IconName::Folder)
+                            .label(t!("new_folder").to_string())
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.sftp_creating_folder = true;
+                                this.sftp_new_folder_input.update(cx, |input, cx| {
+                                    input.set_value("", window, cx);
+                                    input.focus_handle(cx).focus(window, cx);
+                                });
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("sftp-delete-selected")
+                            .ghost()
+                            .small()
+                            .icon(IconName::Close)
+                            .label(if selected_entries.is_empty() {
+                                t!("delete_selected").to_string()
+                            } else {
+                                format!(
+                                    "{} ({})",
+                                    t!("delete_selected").to_string(),
+                                    selected_entries.len()
+                                )
+                            })
+                            .disabled(selected_entries.is_empty())
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.show_delete_confirm_dialog(window, cx);
+                            })),
+                    )
+                    .child(
+                        Button::new("sftp-upload-file")
+                            .ghost()
+                            .small()
+                            .icon(IconName::Plus)
+                            .label(t!("upload_file").to_string())
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.upload_sftp_files(window, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new("sftp-upload-folder")
+                            .ghost()
+                            .small()
+                            .icon(IconName::Folder)
+                            .label(t!("upload_folder").to_string())
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.upload_sftp_folder(window, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new("sftp-download-selected")
+                            .ghost()
+                            .small()
+                            .icon(IconName::ArrowDown)
+                            .label(if selected_entries.is_empty() {
+                                t!("download").to_string()
+                            } else {
+                                t!("download_count", count = selected_entries.len()).to_string()
+                            })
+                            .disabled(selected_entries.is_empty())
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.download_selected_sftp_entries(window, cx);
+                            })),
+                    )
+                    .child(
+                        Checkbox::new("sftp-show-hidden")
+                            .small()
+                            .label(t!("hidden").to_string())
+                            .checked(self.show_hidden_files)
+                            .tab_stop(false)
+                            .on_click(cx.listener(|this, checked, _, cx| {
+                                this.show_hidden_files = *checked;
+                                this.config.set_show_hidden_files(*checked);
+                                let _ = this.config.save();
+                                cx.notify();
+                            })),
+                    )
+                })
+                .child(
+                    Button::new("open-transfers")
+                        .ghost()
+                        .small()
+                        .icon(IconName::ArrowDown)
+                        .label(t!("transfers").to_string())
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.show_transfers_dialog(window, cx);
+                        })),
+                )
+            })
+            .when(!is_remote, |this| {
+                this.child(
+                    Button::new("cmd-add")
+                        .ghost()
+                        .xsmall()
+                        .icon(IconName::Plus)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.show_custom_command_dialog(None, window, cx);
+                        })),
+                )
+            });
 
         let monitoring_panel = resizable_panel()
             .size(px(328.))
@@ -1937,8 +1860,12 @@ impl Render for Ashell {
             .child(
                 v_flex()
                     .size_full()
-                    .child(tab_bar)
-                    .child(content),
+                    .child(shared_header)
+                    .child(if is_remote {
+                        self.render_sftp_content(window, cx).into_any_element()
+                    } else {
+                        self.render_custom_commands_content(window, cx).into_any_element()
+                    }),
             );
 
         let body_panel = v_resizable("ashell-body")
