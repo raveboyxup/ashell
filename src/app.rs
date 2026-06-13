@@ -166,7 +166,6 @@ pub(crate) struct Ashell {
 pub(crate) enum MonitoringTab {
     RemoteFiles,
     CustomCommands,
-    System,
 }
 
 impl Default for MonitoringTab {

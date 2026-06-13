@@ -1585,10 +1585,6 @@ impl Render for Ashell {
             self.selected_monitoring_tab,
             MonitoringTab::CustomCommands
         );
-        let is_monitor = matches!(
-            self.selected_monitoring_tab,
-            MonitoringTab::System
-        );
 
         let tab_bar = h_flex()
             .flex_none()
@@ -1598,39 +1594,6 @@ impl Render for Ashell {
             .border_b_1()
             .border_color(cx.theme().border)
             .bg(cx.theme().tab_bar)
-            .child(
-                h_flex()
-                    .h(px(34.))
-                    .px_3()
-                    .items_center()
-                    .cursor_pointer()
-                    .bg(if is_monitor {
-                        cx.theme().background
-                    } else {
-                        cx.theme().transparent
-                    })
-                    .on_mouse_down(MouseButton::Left, cx.listener(
-                        |this, _, _, cx| {
-                            this.selected_monitoring_tab = MonitoringTab::System;
-                            cx.notify();
-                        },
-                    ))
-                    .child(
-                        div()
-                            .text_size(rems(1.0))
-                            .font_weight(if is_monitor {
-                                FontWeight::SEMIBOLD
-                            } else {
-                                FontWeight::NORMAL
-                            })
-                            .text_color(if is_monitor {
-                                cx.theme().primary
-                            } else {
-                                cx.theme().muted_foreground
-                            })
-                            .child(t!("system")),
-                    ),
-            )
             .child(
                 h_flex()
                     .h(px(34.))
@@ -1701,9 +1664,7 @@ impl Render for Ashell {
             )
             .child(div().flex_1());
 
-        let content: gpui::AnyElement = if is_monitor {
-            self.render_monitoring_panel(window.viewport_size().width, cx).into_any_element()
-        } else if is_remote {
+        let content: gpui::AnyElement = if is_remote {
             self.render_sftp_panel(window, cx).into_any_element()
         } else {
             self.render_custom_commands_panel(window, cx).into_any_element()
@@ -1715,6 +1676,7 @@ impl Render for Ashell {
             .child(
                 v_flex()
                     .size_full()
+                    .child(self.render_monitoring_panel(window.viewport_size().width, cx))
                     .child(tab_bar)
                     .child(content),
             );
