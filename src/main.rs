@@ -43,7 +43,7 @@ const EMBEDDED_THEME_JSONS: &[&str] = &[
 gpui::actions!(ashell_terminal, [TerminalTabKey, TerminalBacktabKey]);
 
 pub(crate) use app::{
-    Ashell, ConnectionProgress, MonitoringTab, SelectorEntry, SftpContextMenuState,
+    Ashell, ConnectionProgress, SelectorEntry, SftpContextMenuState,
 };
 
 fn load_fonts(cx: &mut App) -> Result<()> {

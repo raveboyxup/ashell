@@ -22,7 +22,7 @@ use gpui_component::{
 use rust_i18n::t;
 
 use crate::{
-    Ashell, MonitoringTab, SIDEBAR_WIDTH, TERMINAL_KEY_CONTEXT,
+    Ashell, SIDEBAR_WIDTH, TERMINAL_KEY_CONTEXT,
     sftp_ops::is_editable_text_file,
     sftp::format_mtime,
     system::format_bytes,
@@ -1219,6 +1219,85 @@ impl Ashell {
                     ),
             )
             .child(
+                v_flex()
+                    .gap_2()
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .child(
+                                div()
+                                    .text_size(rems(0.917))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(cx.theme().primary)
+                                    .child(t!("system")),
+                            )
+                            .child(div().flex_1())
+                            .child(
+                                div()
+                                    .text_size(rems(0.75))
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(match self.active_kind() {
+                                        Some(TabKind::Ssh) => self.active_title().into(),
+                                        Some(TabKind::Local) => t!("local_terminal").to_string(),
+                                        None => "idle".to_string(),
+                                    }),
+                            ),
+                    )
+                    .when_some(self.system_status.clone(), |this, text| {
+                        this.child(
+                            div()
+                                .text_size(rems(0.75))
+                                .text_color(cx.theme().muted_foreground)
+                                .child(text),
+                        )
+                    })
+                    .child(self.sidebar_system_card(
+                        "CPU",
+                        self.system.cpu_percent,
+                        "global load".into(),
+                        cx.theme().chart_1,
+                        cx,
+                    ))
+                    .child(self.sidebar_system_card(
+                        "MEM",
+                        self.system.mem_percent,
+                        self.system.mem_detail.clone(),
+                        cx.theme().chart_2,
+                        cx,
+                    ))
+                    .child(self.sidebar_system_card(
+                        "SWAP",
+                        self.system.swap_percent,
+                        self.system.swap_detail.clone(),
+                        cx.theme().chart_3,
+                        cx,
+                    ))
+                    .child(self.sidebar_network_card(cx))
+                    .child(
+                        v_flex()
+                            .gap_2()
+                            .p_2()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(cx.theme().border)
+                            .bg(cx.theme().muted)
+                            .child(
+                                div()
+                                    .text_size(rems(0.75))
+                                    .text_color(cx.theme().chart_5)
+                                    .child("DISK"),
+                            )
+                            .children({
+                                let mut disk_elements: Vec<gpui::AnyElement> = Vec::new();
+                                for disk in self.system.disks.clone() {
+                                    let el = self.sidebar_disk_row(disk, cx);
+                                    disk_elements.push(el.into_any_element());
+                                }
+                                disk_elements
+                            }),
+                    ),
+            )
+            .child(
                 Button::new("open-ssh-panel")
                     .primary()
                     .label(t!("add_ssh").to_string())
@@ -1361,6 +1440,188 @@ impl Ashell {
                                     ),
                             ),
                     ),
+            )
+    }
+
+    fn sidebar_system_card(
+        &self,
+        label: &'static str,
+        percent: f32,
+        detail: String,
+        fill: Hsla,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let percent = percent.clamp(0.0, 1.0);
+        v_flex()
+            .gap_1()
+            .p_2()
+            .rounded_md()
+            .border_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().muted)
+            .child(
+                h_flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_size(rems(0.75))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(fill)
+                            .child(label),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        div()
+                            .text_size(rems(0.75))
+                            .text_color(cx.theme().muted_foreground)
+                            .flex_none()
+                            .child(format!("{:.0}%", percent * 100.0)),
+                    ),
+            )
+            .child(
+                Progress::new(format!("sidebar-progress-{label}"))
+                    .with_size(px(6.))
+                    .value(percent * 100.0)
+                    .color(fill)
+                    .w_full(),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .min_w(px(0.))
+                    .overflow_hidden()
+                    .text_size(rems(0.75))
+                    .text_color(cx.theme().muted_foreground)
+                    .child(detail),
+            )
+    }
+
+    fn sidebar_network_card(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .gap_2()
+            .p_2()
+            .rounded_md()
+            .border_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().muted)
+            .child(
+                h_flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_size(rems(0.833))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(cx.theme().chart_4)
+                            .child("NET"),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        div()
+                            .text_size(rems(0.75))
+                            .text_color(cx.theme().muted_foreground)
+                            .child("live"),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        h_flex()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .gap_1()
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .text_size(rems(0.833))
+                                    .text_color(cx.theme().chart_4)
+                                    .child("↓"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(rems(0.833))
+                                    .child(self.system.net_rx.clone()),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .gap_1()
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .text_size(rems(0.833))
+                                    .text_color(cx.theme().chart_5)
+                                    .child("↑"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(rems(0.833))
+                                    .child(self.system.net_tx.clone()),
+                            ),
+                    ),
+            )
+    }
+
+    fn sidebar_disk_row(
+        &self,
+        disk: crate::system::DiskSample,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let mount = disk.mount.clone();
+        let used = disk.total_bytes.saturating_sub(disk.available_bytes);
+        let percent = if disk.total_bytes == 0 {
+            0.0
+        } else {
+            used as f32 / disk.total_bytes as f32
+        }
+        .clamp(0.0, 1.0);
+
+        v_flex()
+            .gap_1()
+            .child(
+                h_flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .overflow_hidden()
+                            .text_size(rems(0.75))
+                            .text_color(cx.theme().foreground)
+                            .child(mount.clone()),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_size(rems(0.75))
+                            .text_color(cx.theme().muted_foreground)
+                            .child(format!("{:.0}%", percent * 100.0)),
+                    ),
+            )
+            .child(
+                Progress::new(format!("sidebar-disk-progress-{mount}"))
+                    .with_size(px(5.))
+                    .value(percent * 100.0)
+                    .color(cx.theme().chart_5)
+                    .w_full(),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .min_w(px(0.))
+                    .overflow_hidden()
+                    .text_size(rems(0.75))
+                    .text_color(cx.theme().muted_foreground)
+                    .child(format!(
+                        "{} / {}",
+                        crate::system::format_bytes(used),
+                        crate::system::format_bytes(disk.total_bytes),
+                    )),
             )
     }
 
@@ -1577,108 +1838,29 @@ impl Render for Ashell {
             .flex_none()
             .child(self.sidebar(cx));
 
-        let is_remote = matches!(
-            self.selected_monitoring_tab,
-            MonitoringTab::RemoteFiles
-        );
-        let is_commands = matches!(
-            self.selected_monitoring_tab,
-            MonitoringTab::CustomCommands
-        );
-
-        let tab_bar = h_flex()
-            .flex_none()
-            .h(px(34.))
-            .items_center()
-            .gap_0()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().tab_bar)
-            .child(
-                h_flex()
-                    .h(px(34.))
-                    .px_3()
-                    .items_center()
-                    .cursor_pointer()
-                    .bg(if is_remote {
-                        cx.theme().background
-                    } else {
-                        cx.theme().transparent
-                    })
-                    .on_mouse_down(MouseButton::Left, cx.listener(
-                        |this, _, _, cx| {
-                            this.selected_monitoring_tab =
-                                MonitoringTab::RemoteFiles;
-                            cx.notify();
-                        },
-                    ))
-                    .child(
-                        div()
-                            .text_size(rems(1.0))
-                            .font_weight(if is_remote {
-                                FontWeight::SEMIBOLD
-                            } else {
-                                FontWeight::NORMAL
-                            })
-                            .text_color(if is_remote {
-                                cx.theme().primary
-                            } else {
-                                cx.theme().muted_foreground
-                            })
-                            .child(t!("remote_files")),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .h(px(34.))
-                    .px_3()
-                    .items_center()
-                    .cursor_pointer()
-                    .bg(if is_commands {
-                        cx.theme().background
-                    } else {
-                        cx.theme().transparent
-                    })
-                    .on_mouse_down(MouseButton::Left, cx.listener(
-                        |this, _, _, cx| {
-                            this.selected_monitoring_tab =
-                                MonitoringTab::CustomCommands;
-                            cx.notify();
-                        },
-                    ))
-                    .child(
-                        div()
-                            .text_size(rems(1.0))
-                            .font_weight(if is_commands {
-                                FontWeight::SEMIBOLD
-                            } else {
-                                FontWeight::NORMAL
-                            })
-                            .text_color(if is_commands {
-                                cx.theme().primary
-                            } else {
-                                cx.theme().muted_foreground
-                            })
-                            .child(t!("custom_commands")),
-                    ),
-            )
-            .child(div().flex_1());
-
-        let content: gpui::AnyElement = if is_remote {
-            self.render_sftp_panel(window, cx).into_any_element()
-        } else {
-            self.render_custom_commands_panel(window, cx).into_any_element()
-        };
-
         let monitoring_panel = resizable_panel()
             .size(px(328.))
-            .size_range(px(200.)..px(1200.))
+            .size_range(px(260.)..px(1200.))
             .child(
                 v_flex()
                     .size_full()
-                    .child(self.render_monitoring_panel(window.viewport_size().width, cx))
-                    .child(tab_bar)
-                    .child(content),
+                    .child(
+                h_flex()
+                    .flex_1()
+                    .min_h(px(0.))
+                    .child(
+                        div()
+                            .flex_grow(7.)
+                            .min_w(px(0.))
+                            .child(self.render_sftp_panel(window, cx)),
+                    )
+                    .child(
+                        div()
+                            .flex_grow(3.)
+                            .min_w(px(180.))
+                            .child(self.render_custom_commands_panel(window, cx)),
+                    ),
+            ),
             );
 
         let body_panel = v_resizable("ashell-body")
