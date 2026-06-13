@@ -23,7 +23,6 @@ use rust_i18n::t;
 
 use crate::{
     Ashell, MonitoringTab, SIDEBAR_WIDTH, TERMINAL_KEY_CONTEXT,
-    config::CommandItem,
     sftp_ops::is_editable_text_file,
     sftp::format_mtime,
     system::format_bytes,
@@ -416,50 +415,69 @@ impl Ashell {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let view = cx.entity();
-        let items = self
-            .command_tree
-            .iter()
-            .enumerate()
-            .map(|(ix, cmd)| {
-                let is_selected = ix == self.command_flat_selection;
-                let bg = if is_selected {
-                    cx.theme().secondary
-                } else if ix % 2 == 0 {
-                    cx.theme().background
-                } else {
-                    cx.theme().muted.opacity(0.5)
-                };
-                let (cmd_str, cmd_name) = match cmd {
-                    CommandItem::Command(c) => (c.command_string.clone(), c.name.clone()),
-                    CommandItem::Folder(f) => (String::new(), f.name.clone()),
-                };
-                div()
-                    .id(("custom-cmd", ix))
-                    .w_full()
-                    .h(px(32.))
-                    .items_center()
-                    .gap_2()
-                    .px_2()
-                    .bg(bg)
-                    .hover(|style| style.bg(cx.theme().muted))
-                    .border_b_1()
-                    .border_color(cx.theme().border.opacity(0.35))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        {
-                            let cmd_str = cmd_str.clone();
-                            window.listener_for(&view, move |this, _, window, cx| {
-                                this.command_flat_selection = ix;
-                                if this.command_tree.get(ix).is_some() {
-                                    this.execute_command_string(&cmd_str, window, cx);
-                                }
-                                cx.notify();
-                            })
-                        },
-                    )
-                    .context_menu({
-                        let view = cx.entity();
-                        move |menu, _window, _cx| {
+        let sel = self.command_flat_selection;
+        let flat = self.command_flat_items.clone();
+        let items: Vec<gpui::AnyElement> = flat.iter().enumerate().map(|(ix, item)| {
+            let is_selected = ix == sel;
+            let bg = if is_selected {
+                cx.theme().secondary
+            } else if ix % 2 == 0 {
+                cx.theme().background
+            } else {
+                cx.theme().muted.opacity(0.5)
+            };
+            let indent_px = px(8.) + px(16.) * item.depth as f32;
+            let is_folder = item.is_folder;
+            let is_expanded = item.is_expanded;
+            let item_name = item.name.clone();
+            let item_cmd = item.cmd.clone();
+            let arrow = if is_folder {
+                if is_expanded { "▼ " } else { "▶ " }
+            } else {
+                "  "
+            };
+            div()
+                .id(("cmd-tree", ix))
+                .w_full()
+                .h(px(32.))
+                .items_center()
+                .px_2()
+                .bg(bg)
+                .hover(|style| style.bg(cx.theme().muted))
+                .border_b_1()
+                .border_color(cx.theme().border.opacity(0.35))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    window.listener_for(&view, move |this, _, window, cx| {
+                        this.command_flat_selection = ix;
+                        if is_folder {
+                            this.toggle_command_folder(ix);
+                        } else if let Some((cmd_str, _)) = this.get_command_at_flat(ix) {
+                            this.execute_command_string(&cmd_str, window, cx);
+                        }
+                        cx.notify();
+                    }),
+                )
+                .context_menu({
+                    let view = cx.entity();
+                    move |menu, _window, _cx| {
+                        if is_folder {
+                            menu.item(
+                                PopupMenuItem::new(t!("new_command")).on_click(
+                                    _window.listener_for(&view, move |this, _, window, cx| {
+                                        this.show_custom_command_dialog(None, window, cx);
+                                    }),
+                                ),
+                            )
+                            .item(
+                                PopupMenuItem::new(t!("delete")).on_click(
+                                    _window.listener_for(&view, move |this, _, _, cx| {
+                                        this.remove_command_item(ix);
+                                        cx.notify();
+                                    }),
+                                ),
+                            )
+                        } else {
                             menu.item(
                                 PopupMenuItem::new(t!("edit")).on_click(
                                     _window.listener_for(&view, move |this, _, window, cx| {
@@ -470,58 +488,65 @@ impl Ashell {
                             .item(
                                 PopupMenuItem::new(t!("delete")).on_click(
                                     _window.listener_for(&view, move |this, _, _, cx| {
-                                        this.remove_custom_command(ix, cx);
+                                        this.remove_command_item(ix);
+                                        cx.notify();
                                     }),
                                 ),
                             )
                         }
-                    })
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.))
-                            .overflow_hidden()
-                            .text_size(rems(0.917))
-                            .text_color(if is_selected {
-                                cx.theme().primary
-                            } else {
-                                cx.theme().foreground
-                            })
-                            .child(format!("{}  —  {}", cmd_name, cmd_str)),
-                    )
-                    .child(
+                    }
+                })
+                .child(
+                    div()
+                        .w(indent_px)
+                        .flex_none(),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .w(px(16.))
+                        .text_size(rems(0.75))
+                        .text_color(cx.theme().muted_foreground)
+                        .child(arrow),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .overflow_hidden()
+                        .text_size(rems(0.917))
+                        .font_weight(if is_folder { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
+                        .text_color(if is_selected {
+                            cx.theme().primary
+                        } else {
+                            cx.theme().foreground
+                        })
+                        .child(if is_folder {
+                            item_name
+                        } else {
+                            let c = item_cmd.as_deref().unwrap_or("");
+                            format!("{}  —  {}", item_name, c)
+                        }),
+                )
+                .when_some(item_cmd.clone(), |this, cmd_str| {
+                    this.child(
                         Button::new(("cmd-run", ix))
                             .ghost()
                             .xsmall()
                             .icon(IconName::ArrowRight)
-                            .on_click({
-                                let cmd_str = cmd_str.clone();
-                                cx.listener(move |this, _, window, cx| {
-                                    this.execute_command_string(&cmd_str, window, cx);
-                                })
-                            }),
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.execute_command_string(&cmd_str, window, cx);
+                            })),
                     )
-                    .into_any_element()
-            })
-            .collect::<Vec<_>>();
+                })
+                .into_any_element()
+        }).collect();
 
         let command_list = if items.is_empty() {
             v_flex()
                 .flex_1()
                 .items_center()
                 .justify_center()
-                .context_menu({
-                    let view = cx.entity();
-                    move |menu, window, _cx| {
-                        menu.item(
-                            PopupMenuItem::new(t!("new_command")).on_click(
-                                window.listener_for(&view, move |this, _, window, cx| {
-                                    this.show_custom_command_dialog(None, window, cx);
-                                }),
-                            ),
-                        )
-                    }
-                })
                 .child(
                     div()
                         .text_size(rems(0.917))
@@ -547,11 +572,28 @@ impl Ashell {
             .h(px(34.))
             .px_2()
             .items_center()
-            .gap_2()
+            .gap_1()
             .border_t_1()
             .border_color(cx.theme().border)
             .bg(cx.theme().tab_bar)
-            .child(Input::new(&self.custom_command_input).flex_1());
+            .child(Input::new(&self.custom_command_input).flex_1().tab_index(0))
+            .child(
+                Button::new("cmd-editor-send")
+                    .primary()
+                    .xsmall()
+                    .label(t!("send").to_string())
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        let text = this.custom_command_input.read(cx).text().to_string();
+                        if !text.is_empty() {
+                            this.execute_command_string(&text, window, cx);
+                            if this.editor_clear_after_send {
+                                this.custom_command_input.update(cx, |input, cx| {
+                                    input.set_value("", window, cx);
+                                });
+                            }
+                        }
+                    })),
+            );
 
         v_flex()
             .flex_1()
@@ -566,6 +608,13 @@ impl Ashell {
                         PopupMenuItem::new(t!("new_command")).on_click(
                             window.listener_for(&view, move |this, _, window, cx| {
                                 this.show_custom_command_dialog(None, window, cx);
+                            }),
+                        ),
+                    )
+                    .item(
+                        PopupMenuItem::new(t!("new_folder")).on_click(
+                            window.listener_for(&view, move |this, _, window, cx| {
+                                this.show_new_folder_dialog(window, cx);
                             }),
                         ),
                     )

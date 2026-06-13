@@ -19,6 +19,7 @@ use rust_i18n::t;
 
 use crate::{
     Ashell,
+    app::{flatten_command_tree, set_tree_item},
     config::{AuthMethod, CommandEntry, CommandItem},
     system::format_bytes,
 };
@@ -1256,23 +1257,96 @@ impl Ashell {
         });
     }
 
+    pub(crate) fn show_new_folder_dialog(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let input = self.new_folder_name_input.clone();
+        input.update(cx, |input, cx| {
+            input.set_value("", window, cx);
+        });
+        let view = cx.entity();
+        window.open_dialog(cx, move |dialog: Dialog, _window, cx| {
+            let view = view.clone();
+            let input = input.clone();
+            dialog
+                .title(t!("new_folder").to_string())
+                .w(px(400.))
+                .overlay_closable(true)
+                .content(move |content, window, cx| {
+                    let view = view.clone();
+                    let input = input.clone();
+                    content.child(
+                        v_flex()
+                            .gap_3()
+                            .child(
+                                v_flex()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .text_size(rems(0.833))
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child(t!("folder_name")),
+                                    )
+                                    .child(Input::new(&input).tab_index(0)),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .justify_end()
+                                    .child(
+                                        Button::new("folder-dialog-cancel")
+                                            .ghost()
+                                            .label(t!("cancel"))
+                                            .on_click({
+                                                let view = view.clone();
+                                                move |_, window, cx| {
+                                                    window.close_dialog(cx);
+                                                    let _ = view.update(cx, |this, cx| {
+                                                        cx.notify();
+                                                    });
+                                                }
+                                            }),
+                                    )
+                                    .child(
+                                        Button::new("folder-dialog-create")
+                                            .primary()
+                                            .label(t!("add"))
+                                            .on_click({
+                                                let view = view.clone();
+                                                let input = input.clone();
+                                                move |_, window, cx| {
+                                                    let name = input.read(cx).text().to_string();
+                                                    if !name.is_empty() {
+                                                        let _ = view.update(cx, |this, cx| {
+                                                            this.add_command_folder(&name);
+                                                            cx.notify();
+                                                        });
+                                                    }
+                                                    window.close_dialog(cx);
+                                                }
+                                            }),
+                                    ),
+                            ),
+                    )
+                })
+        });
+    }
+
     pub(crate) fn show_custom_command_dialog(
         &mut self,
-        edit_index: Option<usize>,
+        edit_flat_index: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let name_input = self.command_dialog_name_input.clone();
         let cmd_input = self.command_dialog_cmd_input.clone();
-        let name = edit_index
-            .and_then(|i| self.command_tree.get(i))
-            .map(|c| c.name().to_string())
-            .unwrap_or_default();
-        let command = edit_index
-            .and_then(|i| self.command_tree.get(i))
-            .and_then(|c| match c {
-                CommandItem::Command(cmd) => Some(cmd.command_string.clone()),
-                CommandItem::Folder(_) => None,
+        let (name, command) = edit_flat_index
+            .and_then(|i| {
+                let item = self.command_flat_items.get(i)?;
+                let cmd = item.cmd.as_deref()?;
+                Some((item.name.clone(), cmd.to_string()))
             })
             .unwrap_or_default();
         name_input.update(cx, |input, cx| {
@@ -1282,12 +1356,16 @@ impl Ashell {
             input.set_value(&command, window, cx);
         });
 
-        let is_new = edit_index.is_none();
+        let is_new = edit_flat_index.is_none();
         let title = if is_new {
             t!("new_command")
         } else {
             t!("edit_command")
         };
+        let edit_path: Option<Vec<usize>> = edit_flat_index
+            .and_then(|i| self.command_flat_items.get(i))
+            .map(|item| item.path.clone());
+        let edit_path_clone = edit_path.clone();
         let view = cx.entity();
 
         window.open_dialog(cx, move |dialog: Dialog, _window, cx| {
@@ -1299,10 +1377,12 @@ impl Ashell {
                     let view = view.clone();
                     let name_input = name_input.clone();
                     let cmd_input = cmd_input.clone();
+                    let edit_path = edit_path_clone.clone();
                     move |content, window, cx| {
                         let view = view.clone();
                         let name_input = name_input.clone();
                         let cmd_input = cmd_input.clone();
+                        let edit_path = edit_path.clone();
                         content.child(
                             v_flex()
                                 .gap_3()
@@ -1354,25 +1434,25 @@ impl Ashell {
                                                     let view = view.clone();
                                                     let name_input = name_input.clone();
                                                     let cmd_input = cmd_input.clone();
+                                                    let edit_path = edit_path.clone();
                                                     move |_, window, cx| {
                                                         let n = name_input.read(cx).text().to_string();
                                                         let c = cmd_input.read(cx).text().to_string();
                                                         if !n.is_empty() && !c.is_empty() {
                                                             let _ = view.update(cx, |this, cx| {
-                                                                let cmd = CommandEntry {
+                                                                let cmd = crate::config::CommandEntry {
                                                                     id: uuid::Uuid::new_v4().to_string(),
                                                                     name: n,
                                                                     command_string: c,
                                                                     append_cr: true,
                                                                 };
-                                                                if let Some(idx) = edit_index {
-                                                                    if idx < this.command_tree.len() {
-                                                                        this.command_tree[idx] = CommandItem::Command(cmd);
-                                                                    }
+                                                                if let Some(path) = &edit_path {
+                                                                    set_tree_item(&mut this.command_tree, path, crate::config::CommandItem::Command(cmd));
                                                                 } else {
-                                                                    this.command_tree.push(CommandItem::Command(cmd));
-                                                                    this.command_flat_selection = this.command_tree.len().saturating_sub(1);
+                                                                    this.command_tree.push(crate::config::CommandItem::Command(cmd));
                                                                 }
+                                                                this.command_flat_items = flatten_command_tree(&this.command_tree);
+                                                                this.command_flat_selection = this.command_flat_items.len().saturating_sub(1);
                                                                 this.config.set_custom_commands(this.command_tree.clone());
                                                                 let _ = this.config.save();
                                                                 cx.notify();

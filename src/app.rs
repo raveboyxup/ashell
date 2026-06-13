@@ -851,4 +851,96 @@ impl Ashell {
         self.system = snapshot;
         cx.notify();
     }
+
+    pub(crate) fn toggle_command_folder(&mut self, flat_index: usize) {
+        let Some(item) = self.command_flat_items.get(flat_index) else { return };
+        if !item.is_folder { return; }
+        toggle_tree_item(&mut self.command_tree, &item.path);
+        self.command_flat_items = flatten_command_tree(&self.command_tree);
+        self.config.set_custom_commands(self.command_tree.clone());
+        let _ = self.config.save();
+    }
+
+    pub(crate) fn add_command_folder(&mut self, name: &str) {
+        let folder = crate::config::CommandFolder {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: name.to_string(),
+            children: Vec::new(),
+            is_expanded: true,
+        };
+        self.command_tree.push(crate::config::CommandItem::Folder(folder));
+        self.command_flat_items = flatten_command_tree(&self.command_tree);
+        self.command_flat_selection = self.command_flat_items.len().saturating_sub(1);
+        self.config.set_custom_commands(self.command_tree.clone());
+        let _ = self.config.save();
+    }
+
+    pub(crate) fn add_command_item(&mut self, name: &str, cmd: &str, append_cr: bool) {
+        let entry = crate::config::CommandEntry {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: name.to_string(),
+            command_string: cmd.to_string(),
+            append_cr,
+        };
+        self.command_tree.push(crate::config::CommandItem::Command(entry));
+        self.command_flat_items = flatten_command_tree(&self.command_tree);
+        self.command_flat_selection = self.command_flat_items.len().saturating_sub(1);
+        self.config.set_custom_commands(self.command_tree.clone());
+        let _ = self.config.save();
+    }
+
+    pub(crate) fn remove_command_item(&mut self, flat_index: usize) {
+        let Some(item) = self.command_flat_items.get(flat_index) else { return };
+        remove_tree_item(&mut self.command_tree, &item.path);
+        self.command_flat_items = flatten_command_tree(&self.command_tree);
+        self.command_flat_selection = self.command_flat_selection.min(
+            self.command_flat_items.len().saturating_sub(1)
+        );
+        self.config.set_custom_commands(self.command_tree.clone());
+        let _ = self.config.save();
+    }
+
+    pub(crate) fn get_command_at_flat(&self, flat_index: usize) -> Option<(String, bool)> {
+        let item = self.command_flat_items.get(flat_index)?;
+        if item.is_folder { return None; }
+        item.cmd.clone().map(|c| (c, item.append_cr))
+    }
+}
+
+fn toggle_tree_item(items: &mut [crate::config::CommandItem], path: &[usize]) {
+    if path.is_empty() { return; }
+    let idx = path[0];
+    if idx >= items.len() { return; }
+    match &mut items[idx] {
+        crate::config::CommandItem::Folder(f) => {
+            if path.len() == 1 {
+                f.is_expanded = !f.is_expanded;
+            } else {
+                toggle_tree_item(&mut f.children, &path[1..]);
+            }
+        }
+        crate::config::CommandItem::Command(_) => {}
+    }
+}
+
+fn remove_tree_item(items: &mut Vec<crate::config::CommandItem>, path: &[usize]) {
+    if path.is_empty() { return; }
+    let idx = path[0];
+    if idx >= items.len() { return; }
+    if path.len() == 1 {
+        items.remove(idx);
+    } else if let crate::config::CommandItem::Folder(f) = &mut items[idx] {
+        remove_tree_item(&mut f.children, &path[1..]);
+    }
+}
+
+pub(crate) fn set_tree_item(items: &mut [crate::config::CommandItem], path: &[usize], new_item: crate::config::CommandItem) {
+    if path.is_empty() { return; }
+    let idx = path[0];
+    if idx >= items.len() { return; }
+    if path.len() == 1 {
+        items[idx] = new_item;
+    } else if let crate::config::CommandItem::Folder(f) = &mut items[idx] {
+        set_tree_item(&mut f.children, &path[1..], new_item);
+    }
 }
