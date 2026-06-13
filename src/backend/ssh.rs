@@ -115,7 +115,8 @@ async fn run_ssh(
         tab_id: tab_id.clone(),
     });
 
-    let mut exit_reason = "ssh session closed".to_string();
+    let mut exit_reason = "ssh connection lost (unknown)".to_string();
+    let mut is_graceful_close = false;
 
     loop {
         tokio::select! {
@@ -132,6 +133,7 @@ async fn run_ssh(
                     }
                     Some(BackendCommand::Close) | None => {
                         let _ = channel.eof().await;
+                        exit_reason = "ssh session closed".to_string();
                         break;
                     }
                 }
@@ -144,7 +146,15 @@ async fn run_ssh(
                             bytes: data.to_vec(),
                         });
                     }
+                    Some(ChannelMsg::ExitStatus { exit_status: _ }) => {
+                        is_graceful_close = true;
+                    }
                     Some(ChannelMsg::Close) => {
+                        if is_graceful_close {
+                            exit_reason = "ssh session closed".to_string();
+                        } else {
+                            exit_reason = "ssh connection lost (abrupt close)".to_string();
+                        }
                         break;
                     }
                     None => {

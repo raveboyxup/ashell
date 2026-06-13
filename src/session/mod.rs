@@ -431,17 +431,53 @@ impl Ashell {
             return;
         };
 
+        // Close old backend
         self.tabs[ix].backend.send(BackendCommand::Close);
-        self.tabs.remove(ix);
-        if self.active_tab.as_deref() == Some(progress.tab_id.as_str()) {
-            self.active_tab = self
-                .tabs
-                .get(ix)
-                .or_else(|| self.tabs.get(ix.saturating_sub(1)))
-                .map(|tab| tab.id.clone());
+
+        // Spawn new backend
+        let backend = ssh::spawn_ssh_terminal(
+            self.runtime.handle(),
+            progress.tab_id.clone(),
+            session.clone(),
+            DEFAULT_COLS,
+            DEFAULT_ROWS,
+            self.events_tx.clone(),
+        );
+
+        // Replace tab state in-place to reuse the UI component
+        self.tabs[ix] = TerminalTab::new_ssh(
+            progress.tab_id.clone(),
+            &session,
+            backend,
+            self.events_tx.clone(),
+        );
+
+        // Restart SFTP if applicable
+        if let Some(group) = self.tab_groups.iter_mut().find(|g| g.pane_root.contains(&progress.tab_id)) {
+            if let Some(old_handle) = self.sftp_handles.remove(&group.id) {
+                old_handle.close();
+            }
+            let sftp_handle = crate::sftp::spawn_sftp(
+                self.runtime.handle(),
+                group.id.clone(),
+                session.clone(),
+                self.events_tx.clone(),
+            );
+            self.sftp_handles.insert(group.id.clone(), sftp_handle);
+            
+            if let Some(sftp) = group.sftp.as_mut() {
+                sftp.status = rust_i18n::t!("sftp_connecting").to_string();
+            }
         }
-        self.connection_progress = None;
-        self.open_ssh_session(session, cx);
+
+        self.connection_progress = Some(ConnectionProgress {
+            tab_id: progress.tab_id.clone(),
+            title: t!("connecting").into(),
+            lines: vec![t!("starting_connection").into()],
+            failed: false,
+        });
+        self.status = "ssh tab retrying".into();
+        cx.notify();
     }
 
     pub(crate) fn cancel_connection_progress(&mut self, cx: &mut Context<Self>) {
