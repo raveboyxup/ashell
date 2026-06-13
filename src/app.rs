@@ -29,6 +29,18 @@ use crate::{
     ssh_terminal,
 };
 
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum MonitoringTab {
+    RemoteFiles,
+    CustomCommands,
+}
+
+impl Default for MonitoringTab {
+    fn default() -> Self {
+        Self::RemoteFiles
+    }
+}
+
 pub(crate) struct TerminalScrollbarState {
     line_height: Pixels,
     total_lines: usize,
@@ -137,6 +149,7 @@ pub(crate) struct Ashell {
     pub(crate) command_dialog_cmd_input: Entity<InputState>,
     pub(crate) commands_focus_handle: FocusHandle,
     pub(crate) commands_scroll_handle: gpui::ScrollHandle,
+    pub(crate) selected_monitoring_tab: MonitoringTab,
 
     pub(crate) show_hidden_files: bool,
     pub(crate) transfers: Vec<crate::terminal::Transfer>,
@@ -323,6 +336,7 @@ impl Ashell {
             command_dialog_cmd_input,
             commands_focus_handle: cx.focus_handle(),
             commands_scroll_handle: gpui::ScrollHandle::new(),
+            selected_monitoring_tab: MonitoringTab::RemoteFiles,
             show_hidden_files: config.show_hidden_files(),
             transfers: config.transfers(),
             show_transfers_dialog: false,
