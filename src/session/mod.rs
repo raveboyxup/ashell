@@ -483,6 +483,7 @@ impl Ashell {
             }
         }
         self.focus_handle.focus(window, cx);
+        self.sync_system_tab_to_active_group();
         cx.notify();
     }
 
@@ -576,13 +577,7 @@ impl Ashell {
             return;
         }
 
-        // Reassign system_tab_id if the closed tab was monitored
-        if self.system_tab_id.as_deref() == Some(id.as_str()) {
-            self.system_tab_id = self.tabs.iter().find(|t| t.kind == TabKind::Ssh && t.connected).map(|t| t.id.clone());
-            if self.system_tab_id.is_none() {
-                self.system_status = Some("monitored session closed".to_string().into());
-            }
-        }
+
 
 
         if was_active
@@ -610,6 +605,7 @@ impl Ashell {
                 self.focus_pane_with_id(active_id);
             }
         }
+        self.sync_system_tab_to_active_group();
         cx.notify();
     }
 
@@ -978,6 +974,7 @@ impl Ashell {
             }
             self.focus_handle.focus(window, cx);
         }
+        self.sync_system_tab_to_active_group();
         cx.notify();
     }
 
@@ -985,6 +982,44 @@ impl Ashell {
         if let Some(group_id) = self.active_group.clone() {
             if let Some(group) = self.tab_groups.iter_mut().find(|g| g.id == group_id) {
                 group.pane_root = self.pane_root.clone();
+            }
+        }
+    }
+
+    pub(crate) fn sync_system_tab_to_active_group(&mut self) {
+        let mut group_ssh_tabs = vec![];
+        if let Some(group_id) = &self.active_group {
+            if let Some(group) = self.tab_groups.iter().find(|g| g.id == *group_id) {
+                let ids = group.pane_root.tab_ids();
+                for id in ids {
+                    if let Some(tab) = self.tabs.iter().find(|t| t.id == *id) {
+                        if tab.kind == TabKind::Ssh && tab.connected {
+                            group_ssh_tabs.push(tab.id.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Check if current system_tab_id is valid in this group
+        let is_current_valid = self.system_tab_id
+            .as_ref()
+            .map_or(false, |id| group_ssh_tabs.contains(id));
+
+        if !is_current_valid {
+            let new_id = group_ssh_tabs.into_iter().next();
+            if self.system_tab_id != new_id {
+                self.system_tab_id = new_id;
+                self.cpu_history.clear();
+                self.net_rx_history.clear();
+                self.net_tx_history.clear();
+                self.remote_sample_in_flight = false;
+                if self.system_tab_id.is_none() {
+                    self.system_status = Some("monitored session closed".to_string().into());
+                } else {
+                    self.system_status = None;
+                }
+                self.request_active_system_snapshot();
             }
         }
     }

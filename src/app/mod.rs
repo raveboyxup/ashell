@@ -552,12 +552,8 @@ impl Ashell {
                 BackendEvent::Connected { tab_id } => {
                     if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
                         tab.connected = true;
-                        if tab.session.is_some() {
-                            if self.system_tab_id.is_none() {
-                                self.system_tab_id = Some(tab_id.clone());
-                            }
-                        }
                     }
+                    self.sync_system_tab_to_active_group();
                     self.request_active_system_snapshot();
                     if self
                         .connection_progress
@@ -669,15 +665,7 @@ impl Ashell {
                             }
                             return changed;
                         }
-                        // Reassign system_tab_id if the closed tab was monitored
-                        if self.system_tab_id.as_deref() == Some(tab_id.as_str()) {
-                            self.system_tab_id = self.tabs.iter().find(|t| t.kind == TabKind::Ssh && t.connected).map(|t| t.id.clone());
-                            self.cpu_history.clear();
-                            self.net_rx_history.clear();
-                            self.net_tx_history.clear();
-                            self.remote_sample_in_flight = false;
-                            self.request_active_system_snapshot();
-                        }
+
                         let was_active = self.active_tab.as_deref() == Some(tab_id.as_str());
                         if was_active
                             || self.active_tab.as_ref().is_some_and(|active_id| !self.tabs.iter().any(|tab| &tab.id == active_id))
@@ -689,6 +677,7 @@ impl Ashell {
                                 self.focus_pane_with_id(new_id);
                             }
                         }
+                        self.sync_system_tab_to_active_group();
                         self.status = reason.into();
                         self.remote_sample_in_flight = false;
                         return changed;
