@@ -19,7 +19,7 @@ use rust_i18n::t;
 
 use crate::{
     Ashell,
-    config::AuthMethod,
+    config::{AuthMethod, CustomCommand},
     system::format_bytes,
 };
 
@@ -1255,4 +1255,137 @@ impl Ashell {
                 })
         });
     }
+
+    pub(crate) fn show_custom_command_dialog(
+        &mut self,
+        edit_index: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let name_input = self.command_dialog_name_input.clone();
+        let cmd_input = self.command_dialog_cmd_input.clone();
+        let name = edit_index
+            .and_then(|i| self.custom_commands.get(i))
+            .map(|c| c.name.clone())
+            .unwrap_or_default();
+        let command = edit_index
+            .and_then(|i| self.custom_commands.get(i))
+            .map(|c| c.command_string.clone())
+            .unwrap_or_default();
+        name_input.update(cx, |input, cx| {
+            input.set_value(&name, window, cx);
+        });
+        cmd_input.update(cx, |input, cx| {
+            input.set_value(&command, window, cx);
+        });
+
+        let is_new = edit_index.is_none();
+        let title = if is_new {
+            t!("new_command")
+        } else {
+            t!("edit_command")
+        };
+        let view = cx.entity();
+
+        window.open_dialog(cx, move |dialog: Dialog, _window, cx| {
+            dialog
+                .title(title.to_string())
+                .w(px(480.))
+                .overlay_closable(true)
+                .content({
+                    let view = view.clone();
+                    let name_input = name_input.clone();
+                    let cmd_input = cmd_input.clone();
+                    move |content, window, cx| {
+                        let view = view.clone();
+                        let name_input = name_input.clone();
+                        let cmd_input = cmd_input.clone();
+                        content.child(
+                            v_flex()
+                                .gap_3()
+                                .child(
+                                    v_flex()
+                                        .gap_1()
+                                        .child(
+                                            div()
+                                                .text_size(rems(0.833))
+                                                .text_color(cx.theme().muted_foreground)
+                                                .child(t!("command_name")),
+                                        )
+                                        .child(Input::new(&name_input).tab_index(0)),
+                                )
+                                .child(
+                                    v_flex()
+                                        .gap_1()
+                                        .child(
+                                            div()
+                                                .text_size(rems(0.833))
+                                                .text_color(cx.theme().muted_foreground)
+                                                .child(t!("command_string")),
+                                        )
+                                        .child(Input::new(&cmd_input).tab_index(1)),
+                                )
+                                .child(
+                                    h_flex()
+                                        .gap_2()
+                                        .justify_end()
+                                        .child(
+                                            Button::new("cmd-dialog-cancel")
+                                                .ghost()
+                                                .label(t!("cancel"))
+                                                .on_click({
+                                                    let view = view.clone();
+                                                    move |_, window, cx| {
+                                                        window.close_dialog(cx);
+                                                        let _ = view.update(cx, |this, cx| {
+                                                            cx.notify();
+                                                        });
+                                                    }
+                                                }),
+                                        )
+                                        .child(
+                                            Button::new("cmd-dialog-save")
+                                                .primary()
+                                                .label(if is_new { t!("add") } else { t!("save") })
+                                                .on_click({
+                                                    let view = view.clone();
+                                                    let name_input = name_input.clone();
+                                                    let cmd_input = cmd_input.clone();
+                                                    move |_, window, cx| {
+                                                        let n = name_input.read(cx).text().to_string();
+                                                        let c = cmd_input.read(cx).text().to_string();
+                                                        if !n.is_empty() && !c.is_empty() {
+                                                            let _ = view.update(cx, |this, cx| {
+                                                                let cmd = CustomCommand {
+                                                                    id: uuid::Uuid::new_v4().to_string(),
+                                                                    name: n,
+                                                                    command_string: c,
+                                                                };
+                                                                if let Some(idx) = edit_index {
+                                                                    if idx < this.custom_commands.len() {
+                                                                        let mut existing = this.custom_commands[idx].clone();
+                                                                        existing.name = cmd.name.clone();
+                                                                        existing.command_string = cmd.command_string.clone();
+                                                                        this.custom_commands[idx] = existing;
+                                                                    }
+                                                                } else {
+                                                                    this.custom_commands.push(cmd);
+                                                                    this.selected_command_index = this.custom_commands.len().saturating_sub(1);
+                                                                }
+                                                                this.config.set_custom_commands(this.custom_commands.clone());
+                                                                let _ = this.config.save();
+                                                                cx.notify();
+                                                            });
+                                                        }
+                                                        window.close_dialog(cx);
+                                                    }
+                                                }),
+                                        ),
+                                ),
+                        )
+                    }
+                })
+        });
+    }
+
 }

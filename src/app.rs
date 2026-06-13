@@ -133,6 +133,8 @@ pub(crate) struct Ashell {
     pub(crate) custom_commands: Vec<crate::config::CustomCommand>,
     pub(crate) selected_command_index: usize,
     pub(crate) custom_command_input: Entity<InputState>,
+    pub(crate) command_dialog_name_input: Entity<InputState>,
+    pub(crate) command_dialog_cmd_input: Entity<InputState>,
     pub(crate) commands_focus_handle: FocusHandle,
     pub(crate) commands_scroll_handle: gpui::ScrollHandle,
     pub(crate) selected_monitoring_tab: MonitoringTab,
@@ -164,6 +166,7 @@ pub(crate) struct Ashell {
 pub(crate) enum MonitoringTab {
     RemoteFiles,
     CustomCommands,
+    System,
 }
 
 impl Default for MonitoringTab {
@@ -219,6 +222,12 @@ impl Ashell {
         let custom_command_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder(t!("type_command_hint").to_string())
+        });
+        let command_dialog_name_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(t!("command_name").to_string())
+        });
+        let command_dialog_cmd_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(t!("command_string").to_string())
         });
 
         let _subscriptions = vec![
@@ -323,6 +332,8 @@ impl Ashell {
             custom_commands: config.custom_commands().to_vec(),
             selected_command_index: 0,
             custom_command_input,
+            command_dialog_name_input,
+            command_dialog_cmd_input,
             commands_focus_handle: cx.focus_handle(),
             commands_scroll_handle: gpui::ScrollHandle::new(),
             selected_monitoring_tab: MonitoringTab::RemoteFiles,

@@ -549,6 +549,7 @@ impl Ashell {
             .flex_none()
             .h(px(34.))
             .items_center()
+            .px_3()
             .gap_2()
             .border_b_1()
             .border_color(cx.theme().border)
@@ -559,6 +560,16 @@ impl Ashell {
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(cx.theme().primary)
                     .child(t!("custom_commands")),
+            )
+            .child(div().flex_1())
+            .child(
+                Button::new("cmd-add")
+                    .ghost()
+                    .xsmall()
+                    .icon(IconName::Plus)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.show_custom_command_dialog(None, window, cx);
+                    })),
             );
 
         let items = self
@@ -575,6 +586,7 @@ impl Ashell {
                     cx.theme().muted.opacity(0.5)
                 };
                 let cmd_str = cmd.command_string.clone();
+                let cmd_id = cmd.id.clone();
                 div()
                     .id(("custom-cmd", ix))
                     .w_full()
@@ -589,7 +601,6 @@ impl Ashell {
                     .on_mouse_down(
                         MouseButton::Left,
                         window.listener_for(&view, move |this, _, window, cx| {
-                            this.commands_focus_handle.focus(window, cx);
                             this.selected_command_index = ix;
                             if this.custom_commands.get(ix).is_some() {
                                 this.execute_command_string(&cmd_str, window, cx);
@@ -597,6 +608,25 @@ impl Ashell {
                             cx.notify();
                         }),
                     )
+                    .context_menu({
+                        let view = cx.entity();
+                        move |menu, _window, _cx| {
+                            menu.item(
+                                PopupMenuItem::new(t!("edit")).on_click(
+                                    _window.listener_for(&view, move |this, _, window, cx| {
+                                        this.show_custom_command_dialog(Some(ix), window, cx);
+                                    }),
+                                ),
+                            )
+                            .item(
+                                PopupMenuItem::new(t!("delete")).on_click(
+                                    _window.listener_for(&view, move |this, _, _, cx| {
+                                        this.remove_custom_command(ix, cx);
+                                    }),
+                                ),
+                            )
+                        }
+                    })
                     .child(
                         div()
                             .flex_1()
@@ -622,15 +652,6 @@ impl Ashell {
                                 })
                             }),
                     )
-                    .child(
-                        Button::new(("cmd-delete", ix))
-                            .ghost()
-                            .xsmall()
-                            .icon(IconName::Close)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.remove_custom_command(ix, cx);
-                            })),
-                    )
                     .into_any_element()
             })
             .collect::<Vec<_>>();
@@ -640,6 +661,18 @@ impl Ashell {
                 .flex_1()
                 .items_center()
                 .justify_center()
+                .context_menu({
+                    let view = cx.entity();
+                    move |menu, window, _cx| {
+                        menu.item(
+                            PopupMenuItem::new(t!("new_command")).on_click(
+                                window.listener_for(&view, move |this, _, window, cx| {
+                                    this.show_custom_command_dialog(None, window, cx);
+                                }),
+                            ),
+                        )
+                    }
+                })
                 .child(
                     div()
                         .text_size(rems(0.917))
@@ -669,7 +702,7 @@ impl Ashell {
             .border_t_1()
             .border_color(cx.theme().border)
             .bg(cx.theme().tab_bar)
-            .child(Input::new(&self.custom_command_input).flex_1().tab_index(0));
+            .child(Input::new(&self.custom_command_input).flex_1());
 
         v_flex()
             .size_full()
@@ -677,12 +710,19 @@ impl Ashell {
             .border_color(cx.theme().border)
             .border_l_1()
             .bg(cx.theme().background)
-            .track_focus(&self.commands_focus_handle)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(Self::focus_commands_panel),
-            )
             .on_key_down(cx.listener(Self::on_commands_key_down))
+            .context_menu({
+                let view = cx.entity();
+                move |menu, window, _cx| {
+                    menu.item(
+                        PopupMenuItem::new(t!("new_command")).on_click(
+                            window.listener_for(&view, move |this, _, window, cx| {
+                                this.show_custom_command_dialog(None, window, cx);
+                            }),
+                        ),
+                    )
+                }
+            })
             .child(header)
             .child(command_list)
             .child(bottom)
@@ -1537,110 +1577,146 @@ impl Render for Ashell {
             .flex_none()
             .child(self.sidebar(cx));
 
+        let is_remote = matches!(
+            self.selected_monitoring_tab,
+            MonitoringTab::RemoteFiles
+        );
+        let is_commands = matches!(
+            self.selected_monitoring_tab,
+            MonitoringTab::CustomCommands
+        );
+        let is_monitor = matches!(
+            self.selected_monitoring_tab,
+            MonitoringTab::System
+        );
+
+        let tab_bar = h_flex()
+            .flex_none()
+            .h(px(34.))
+            .items_center()
+            .gap_0()
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().tab_bar)
+            .child(
+                h_flex()
+                    .h(px(34.))
+                    .px_3()
+                    .items_center()
+                    .cursor_pointer()
+                    .bg(if is_monitor {
+                        cx.theme().background
+                    } else {
+                        cx.theme().transparent
+                    })
+                    .on_mouse_down(MouseButton::Left, cx.listener(
+                        |this, _, _, cx| {
+                            this.selected_monitoring_tab = MonitoringTab::System;
+                            cx.notify();
+                        },
+                    ))
+                    .child(
+                        div()
+                            .text_size(rems(1.0))
+                            .font_weight(if is_monitor {
+                                FontWeight::SEMIBOLD
+                            } else {
+                                FontWeight::NORMAL
+                            })
+                            .text_color(if is_monitor {
+                                cx.theme().primary
+                            } else {
+                                cx.theme().muted_foreground
+                            })
+                            .child(t!("system")),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .h(px(34.))
+                    .px_3()
+                    .items_center()
+                    .cursor_pointer()
+                    .bg(if is_remote {
+                        cx.theme().background
+                    } else {
+                        cx.theme().transparent
+                    })
+                    .on_mouse_down(MouseButton::Left, cx.listener(
+                        |this, _, _, cx| {
+                            this.selected_monitoring_tab =
+                                MonitoringTab::RemoteFiles;
+                            cx.notify();
+                        },
+                    ))
+                    .child(
+                        div()
+                            .text_size(rems(1.0))
+                            .font_weight(if is_remote {
+                                FontWeight::SEMIBOLD
+                            } else {
+                                FontWeight::NORMAL
+                            })
+                            .text_color(if is_remote {
+                                cx.theme().primary
+                            } else {
+                                cx.theme().muted_foreground
+                            })
+                            .child(t!("remote_files")),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .h(px(34.))
+                    .px_3()
+                    .items_center()
+                    .cursor_pointer()
+                    .bg(if is_commands {
+                        cx.theme().background
+                    } else {
+                        cx.theme().transparent
+                    })
+                    .on_mouse_down(MouseButton::Left, cx.listener(
+                        |this, _, _, cx| {
+                            this.selected_monitoring_tab =
+                                MonitoringTab::CustomCommands;
+                            cx.notify();
+                        },
+                    ))
+                    .child(
+                        div()
+                            .text_size(rems(1.0))
+                            .font_weight(if is_commands {
+                                FontWeight::SEMIBOLD
+                            } else {
+                                FontWeight::NORMAL
+                            })
+                            .text_color(if is_commands {
+                                cx.theme().primary
+                            } else {
+                                cx.theme().muted_foreground
+                            })
+                            .child(t!("custom_commands")),
+                    ),
+            )
+            .child(div().flex_1());
+
+        let content: gpui::AnyElement = if is_monitor {
+            self.render_monitoring_panel(window.viewport_size().width, cx).into_any_element()
+        } else if is_remote {
+            self.render_sftp_panel(window, cx).into_any_element()
+        } else {
+            self.render_custom_commands_panel(window, cx).into_any_element()
+        };
+
         let monitoring_panel = resizable_panel()
             .size(px(328.))
-            .size_range(px(260.)..px(1200.))
+            .size_range(px(200.)..px(1200.))
             .child(
                 v_flex()
                     .size_full()
-                    .child(self.render_monitoring_panel(window.viewport_size().width, cx))
-                    .child({
-                        let is_remote = matches!(
-                            self.selected_monitoring_tab,
-                            MonitoringTab::RemoteFiles
-                        );
-                        let is_commands = matches!(
-                            self.selected_monitoring_tab,
-                            MonitoringTab::CustomCommands
-                        );
-                        v_flex()
-                            .flex_1()
-                            .min_h(px(0.))
-                            .child(
-                                h_flex()
-                                    .flex_none()
-                                    .h(px(34.))
-                                    .items_center()
-                                    .gap_0()
-                                    .border_b_1()
-                                    .border_color(cx.theme().border)
-                                    .bg(cx.theme().tab_bar)
-                                    .child(
-                                        h_flex()
-                                            .h(px(34.))
-                                            .px_3()
-                                            .items_center()
-                                            .cursor_pointer()
-                                            .bg(if is_remote {
-                                                cx.theme().background
-                                            } else {
-                                                cx.theme().transparent
-                                            })
-                                            .on_mouse_down(MouseButton::Left, cx.listener(
-                                                |this, _, _, cx| {
-                                                    this.selected_monitoring_tab =
-                                                        MonitoringTab::RemoteFiles;
-                                                    cx.notify();
-                                                },
-                                            ))
-                                            .child(
-                                                div()
-                                                    .text_size(rems(1.0))
-                                                    .font_weight(if is_remote {
-                                                        FontWeight::SEMIBOLD
-                                                    } else {
-                                                        FontWeight::NORMAL
-                                                    })
-                                                    .text_color(if is_remote {
-                                                        cx.theme().primary
-                                                    } else {
-                                                        cx.theme().muted_foreground
-                                                    })
-                                                    .child(t!("remote_files")),
-                                            ),
-                                    )
-                                    .child(
-                                        h_flex()
-                                            .h(px(34.))
-                                            .px_3()
-                                            .items_center()
-                                            .cursor_pointer()
-                                            .bg(if is_commands {
-                                                cx.theme().background
-                                            } else {
-                                                cx.theme().transparent
-                                            })
-                                            .on_mouse_down(MouseButton::Left, cx.listener(
-                                                |this, _, _, cx| {
-                                                    this.selected_monitoring_tab =
-                                                        MonitoringTab::CustomCommands;
-                                                    cx.notify();
-                                                },
-                                            ))
-                                            .child(
-                                                div()
-                                                    .text_size(rems(1.0))
-                                                    .font_weight(if is_commands {
-                                                        FontWeight::SEMIBOLD
-                                                    } else {
-                                                        FontWeight::NORMAL
-                                                    })
-                                                    .text_color(if is_commands {
-                                                        cx.theme().primary
-                                                    } else {
-                                                        cx.theme().muted_foreground
-                                                    })
-                                                    .child(t!("custom_commands")),
-                                            ),
-                                    )
-                                    .child(div().flex_1()),
-                            )
-                            .child(if is_remote {
-                                self.render_sftp_panel(window, cx).into_any_element()
-                            } else {
-                                self.render_custom_commands_panel(window, cx).into_any_element()
-                            })
-                    }),
+                    .child(tab_bar)
+                    .child(content),
             );
 
         let body_panel = v_resizable("ashell-body")
