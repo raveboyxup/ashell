@@ -861,7 +861,7 @@ impl Ashell {
             children: Vec::new(),
             is_expanded: true,
         };
-        push_item_at(&mut self.command_tree, &self.command_current_path, crate::config::CommandItem::Folder(folder));
+        self.command_tree.push(crate::config::CommandItem::Folder(folder));
         self.command_flat_items = flatten_command_tree(&self.command_tree);
         self.command_flat_selection = self.command_flat_items.len().saturating_sub(1);
         self.config.set_custom_commands(self.command_tree.clone());
