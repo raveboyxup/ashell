@@ -359,6 +359,8 @@ impl Ashell {
         let custom_command_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder(t!("type_command_hint").to_string())
+                .auto_grow(1, 6)
+                .submit_on_enter(true)
         });
         let command_dialog_name_input = cx.new(|cx| {
             InputState::new(window, cx).placeholder(t!("command_name").to_string())
