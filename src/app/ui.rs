@@ -77,161 +77,6 @@ impl Ashell {
     ) -> impl IntoElement {
         let active_sftp = self.active_sftp();
 
-        let header = h_flex()
-            .flex_none()
-            .h(px(34.))
-            .items_center()
-                    .gap_2()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().tab_bar)
-            .child(
-                div()
-                    .text_size(rems(1.0))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(cx.theme().primary)
-                    .child(t!("remote_files")),
-            )
-            .child(div().flex_1())
-            .when_some(active_sftp.clone(), |this, sftp| {
-                let selected_entries = sftp.selected_entries.clone();
-                this.child(
-                    Button::new("sftp-refresh")
-                        .ghost()
-                        .small()
-                        .icon(IconName::ArrowRight)
-                        .label(t!("refresh").to_string())
-                        .on_click(cx.listener(|this, _, _, cx| this.refresh_sftp(cx))),
-                )
-                .child(
-                    Button::new("sftp-new-folder")
-                        .ghost()
-                        .small()
-                        .icon(IconName::Folder)
-                        .label(t!("new_folder").to_string())
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.sftp_creating_folder = true;
-                            this.sftp_new_folder_input.update(cx, |input, cx| {
-                                input.set_value("", window, cx);
-                                input.focus_handle(cx).focus(window, cx);
-                            });
-                            cx.notify();
-                        })),
-                )
-                .child(
-                    Button::new("sftp-delete-selected")
-                        .ghost()
-                        .small()
-                        .icon(IconName::Close)
-                        .label(if selected_entries.is_empty() {
-                            t!("delete_selected").to_string()
-                        } else {
-                            format!(
-                                "{} ({})",
-                                t!("delete_selected").to_string(),
-                                selected_entries.len()
-                            )
-                        })
-                        .disabled(selected_entries.is_empty())
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.show_delete_confirm_dialog(window, cx);
-                        })),
-                )
-                .child(
-                    Button::new("sftp-upload-file")
-                        .ghost()
-                        .small()
-                        .icon(IconName::Plus)
-                        .label(t!("upload_file").to_string())
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.upload_sftp_files(window, cx)),
-                        ),
-                )
-                .child(
-                    Button::new("sftp-upload-folder")
-                        .ghost()
-                        .small()
-                        .icon(IconName::Folder)
-                        .label(t!("upload_folder").to_string())
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.upload_sftp_folder(window, cx)),
-                        ),
-                )
-                .child(
-                    Button::new("sftp-download-selected")
-                        .ghost()
-                        .small()
-                        .icon(IconName::ArrowDown)
-                        .label(if selected_entries.is_empty() {
-                            t!("download").to_string()
-                        } else {
-                            t!("download_count", count = selected_entries.len()).to_string()
-                        })
-                        .disabled(selected_entries.is_empty())
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.download_selected_sftp_entries(window, cx);
-                        })),
-                )
-                .child(
-                    Checkbox::new("sftp-show-hidden")
-                        .small()
-                        .label(t!("hidden").to_string())
-                        .checked(self.show_hidden_files)
-                        .tab_stop(false)
-                        .on_click(cx.listener(|this, checked, _, cx| {
-                            this.show_hidden_files = *checked;
-                            this.config.set_show_hidden_files(*checked);
-                            let _ = this.config.save();
-                            cx.notify();
-                        })),
-                )
-            })
-            .child(
-                Button::new("open-transfers")
-                    .ghost()
-                    .small()
-                    .icon(IconName::ArrowDown)
-                    .label(t!("transfers").to_string())
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.show_transfers_dialog(window, cx);
-                    })),
-            )
-            .child(
-                Button::new("sftp-minimize-toggle")
-                    .ghost()
-                    .small()
-                    .icon(if self.sftp_panel_minimized { IconName::ChevronUp } else { IconName::ChevronDown })
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        let state = this.body_panels.clone();
-                        let minimized = this.sftp_panel_minimized;
-                        
-                        if !minimized {
-                            let sizes = state.read(cx).sizes();
-                            if sizes.len() > 1 {
-                                this.prev_monitoring_size = Some(sizes[1]);
-                            }
-                            this.sftp_panel_minimized = true;
-                        } else {
-                            this.sftp_panel_minimized = false;
-                            let prev_size = this.prev_monitoring_size.unwrap_or(px(328.));
-                            
-                            cx.on_next_frame(window, move |_this: &mut crate::app::Ashell, window: &mut gpui::Window, cx: &mut gpui::Context<crate::app::Ashell>| {
-                                cx.on_next_frame(window, move |this: &mut crate::app::Ashell, window: &mut gpui::Window, cx: &mut gpui::Context<crate::app::Ashell>| {
-                                    this.body_panels.update(cx, |state, cx| {
-                                        let sizes = state.sizes();
-                                        let c_size_f32: f32 = sizes.iter().map(|s| s.as_f32()).sum();
-                                        let c_size = px(c_size_f32);
-                                        let target_p0 = c_size - prev_size;
-                                        state.resize_panel(0, target_p0, window, cx);
-                                    });
-                                    cx.notify();
-                                });
-                            });
-                        }
-                        cx.notify();
-                    })),
-            );
-
         let Some(sftp) = active_sftp else {
             let mut panel = v_flex()
                 .gap_0()
@@ -243,8 +88,6 @@ impl Ashell {
             } else {
                 panel = panel.flex_none();
             }
-            
-            panel = panel.child(header);
             
             if !self.sftp_panel_minimized {
                 panel = panel.child(
@@ -304,8 +147,7 @@ impl Ashell {
                         .collect();
                     this.upload_sftp_files_batch(paths_to_upload, cx);
                 }),
-            )
-            .child(header);
+            );
 
         if !self.sftp_panel_minimized {
             panel = panel            .child(
@@ -1370,145 +1212,6 @@ impl Ashell {
         panel
     }
 
-    fn render_sidebar_monitoring_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let cpu_pct = self.system.cpu_percent;
-        let mem_pct = self.system.mem_percent;
-        let swap_pct = self.system.swap_percent;
-
-        let cpu_color = cx.theme().chart_1;
-        let mem_color = cx.theme().chart_2;
-        let swap_color = cx.theme().chart_3;
-        let disk_color = cx.theme().chart_5;
-        let net_color = cx.theme().chart_4;
-        let muted_fg = cx.theme().muted_foreground;
-
-        v_flex()
-            .gap_4()
-            .w_full()
-            .p_2()
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .justify_between()
-                            .child(div().text_size(rems(0.85)).text_color(cpu_color).child(t!("cpu").to_string()))
-                            .child(div().text_size(rems(0.85)).text_color(muted_fg).child(format!("{:.1}%", cpu_pct * 100.0))),
-                    )
-                    .child(Progress::new("sidebar-cpu").value(cpu_pct * 100.0).color(cpu_color).with_size(px(4.)).w_full())
-            )
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .justify_between()
-                            .child(div().text_size(rems(0.85)).text_color(mem_color).child(t!("mem").to_string()))
-                            .child(div().text_size(rems(0.85)).text_color(muted_fg).child(self.system.mem_detail.clone())),
-                    )
-                    .child(Progress::new("sidebar-mem").value(mem_pct * 100.0).color(mem_color).with_size(px(4.)).w_full())
-            )
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .justify_between()
-                            .child(div().text_size(rems(0.85)).text_color(swap_color).child(t!("swap").to_string()))
-                            .child(div().text_size(rems(0.85)).text_color(muted_fg).child(self.system.swap_detail.clone())),
-                    )
-                    .child(Progress::new("sidebar-swap").value(swap_pct * 100.0).color(swap_color).with_size(px(4.)).w_full())
-            )
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .justify_between()
-                            .items_center()
-                            .child(div().text_size(rems(0.85)).text_color(disk_color).child(t!("disk").to_string()))
-                            .children(if self.system.disks.len() > 3 {
-                                Some(div().text_size(rems(0.65)).text_color(muted_fg).child(t!("scroll").to_string()))
-                            } else {
-                                None
-                            })
-                    )
-                    .child(
-                        div()
-                            .relative()
-                            .w_full()
-                            .child(
-                                v_flex()
-                                    .id("sidebar-disk-scroll")
-                                    .track_scroll(&self.disk_scroll_handle)
-                                    .overflow_y_scroll()
-                                    .max_h(px(90.))
-                                    .gap_2()
-                                    .children(self.system.disks.iter().map(|disk| {
-                                        let pct = if disk.total_bytes > 0 {
-                                            (disk.total_bytes - disk.available_bytes) as f64 / disk.total_bytes as f64 * 100.0
-                                        } else {
-                                            0.0
-                                        };
-                                        let mount_short = disk.mount.clone();
-                                        let mount_id = format!("sidebar-disk-{}", mount_short);
-                                        v_flex()
-                                            .gap_0p5()
-                                            .child(
-                                                h_flex()
-                                                    .justify_between()
-                                                    .child(div().text_size(rems(0.75)).text_color(muted_fg).child(mount_short))
-                                                    .child(div().text_size(rems(0.75)).text_color(muted_fg).child(format!("{:.1}%", pct))),
-                                            )
-                                            .child(Progress::new(mount_id).value(pct as f32).color(disk_color).with_size(px(4.)).w_full())
-                                    }))
-                            )
-                            .child(
-                                div()
-                                    .absolute()
-                                    .top_0()
-                                    .right_0()
-                                    .bottom_0()
-                                    .w(px(8.))
-                                    .child(
-                                        Scrollbar::vertical(&self.disk_scroll_handle)
-                                            .scrollbar_show(ScrollbarShow::Scrolling)
-                                    )
-                            )
-                    )
-            )
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .justify_between()
-                            .child(div().text_size(rems(0.85)).text_color(net_color).child(t!("net").to_string()))
-                            .child(div().text_size(rems(0.85)).text_color(muted_fg).child(t!("live"))),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .child(
-                                h_flex()
-                                    .flex_1()
-                                    .min_w(px(0.))
-                                    .gap_1()
-                                    .child(div().flex_none().text_size(rems(0.75)).text_color(net_color).child("↓"))
-                                    .child(div().text_size(rems(0.75)).child(self.system.net_rx.clone()))
-                            )
-                            .child(
-                                h_flex()
-                                    .flex_1()
-                                    .min_w(px(0.))
-                                    .gap_1()
-                                    .child(div().flex_none().text_size(rems(0.75)).text_color(cx.theme().chart_5).child("↑"))
-                                    .child(div().text_size(rems(0.75)).child(self.system.net_tx.clone()))
-                            )
-                    )
-            )
-    }
-
     fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let sessions = self.config.sessions().to_vec();
         let active_session_id = self.active_session_id().map(ToOwned::to_owned);
@@ -1572,9 +1275,6 @@ impl Ashell {
                             }),
                     ),
             )
-            .when(self.config.monitoring_position() == "Sidebar", |this| {
-                this.child(self.render_sidebar_monitoring_panel(cx))
-            })
             .child(
                 v_flex()
                     .gap_2()
