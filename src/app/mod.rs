@@ -293,6 +293,7 @@ pub(crate) struct Ashell {
     pub(crate) sftp_panel_minimized: bool,
     pub(crate) prev_monitoring_size: Option<Pixels>,
     pub(crate) status: SharedString,
+    pub(crate) custom_cmd_last_change: Instant,
     pub(crate) config: ConfigStore,
     pub(crate) system_sampler: SystemSampler,
     pub(crate) system: SystemSnapshot,
@@ -515,6 +516,7 @@ impl Ashell {
             sftp_panel_minimized: false,
             prev_monitoring_size: None,
             status: "ready".into(),
+            custom_cmd_last_change: Instant::now(),
             config,
             system_sampler,
             system,
@@ -582,7 +584,17 @@ impl Ashell {
             }
         } else if input == &self.custom_command_input {
             match event {
+                InputEvent::Change => {
+                    self.custom_cmd_last_change = Instant::now();
+                }
                 InputEvent::PressEnter { .. } => {
+                    let elapsed = self.custom_cmd_last_change.elapsed();
+                    tracing::info!("PressEnter: elapsed={:?}, debounce={:?}", elapsed, elapsed < Duration::from_millis(200));
+                    if elapsed < Duration::from_millis(200) {
+                        window.prevent_default();
+                        cx.stop_propagation();
+                        return;
+                    }
                     let text = self.custom_command_input.read(cx).text().to_string();
                     if !text.is_empty() {
                         self.execute_command_string(&text, window, cx);
