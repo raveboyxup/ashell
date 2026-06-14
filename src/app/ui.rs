@@ -1,6 +1,6 @@
 
 use gpui::{
-    ClipboardItem, Context, ElementId, Focusable as _, FontWeight, Hsla, InteractiveElement as _,
+    Context, ElementId, Focusable as _, FontWeight, Hsla, InteractiveElement as _,
     IntoElement, MouseButton, MouseDownEvent,
     ParentElement as _, PathBuilder, Pixels, Render,
     StatefulInteractiveElement as _, Styled as _, Window,
@@ -1039,21 +1039,22 @@ impl Ashell {
         let view = cx.entity();
         let gap_px = px(6.);
         let tile_h = px(34.);
-        let root_folders: Vec<&crate::session::config::CommandItem> = self.command_tree.iter()
-            .filter(|i| i.is_folder())
+        let root_folders: Vec<(usize, &crate::session::config::CommandItem)> = self.command_tree.iter()
+            .enumerate()
+            .filter(|(_, i)| i.is_folder())
             .collect();
         let selected_path = self.command_current_path.clone();
         let has_selected = !selected_path.is_empty();
         let cmd_items = if has_selected { self.current_children() } else { vec![] };
 
         // --- Zone A: folder bar ---
-        let folder_tiles: Vec<gpui::AnyElement> = root_folders.iter().enumerate().map(|(ix, item)| {
-            let path = vec![ix];
+        let folder_tiles: Vec<gpui::AnyElement> = root_folders.iter().enumerate().map(|(_, (actual_ix, item))| {
+            let path = vec![*actual_ix];
             let is_active = selected_path == path;
             let name = item.name().to_string();
             let bg = if is_active { cx.theme().primary } else { cx.theme().muted.opacity(0.2) };
             div()
-                .id(("folder-tile", ix))
+                .id(("folder-tile", *actual_ix))
                 .h(tile_h)
                 .px_2()
                 .rounded(px(6.))
@@ -2237,13 +2238,9 @@ impl Render for Ashell {
                                                 .w_full()
                                                 .justify_start()
                                                 .label(t!("copy_file_path"))
-                                                .on_click({
-                                                    let path = menu.remote_path.clone();
-                                                    cx.listener(move |this, _, _, cx| {
-                                                        cx.write_to_clipboard(ClipboardItem::new_string(path.clone()));
-                                                        this.dismiss_sftp_context_menu(cx);
-                                                    })
-                                                }),
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.trigger_sftp_context_copy_path(cx);
+                                                })),
                                         )
                                         .when(
                                             !menu.is_dir
