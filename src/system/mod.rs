@@ -44,6 +44,7 @@ pub struct SystemSampler {
     last_rx_total: u64,
     last_tx_total: u64,
     last_instant: Instant,
+    sample_count: u64,
 }
 
 impl SystemSampler {
@@ -62,6 +63,7 @@ impl SystemSampler {
             last_rx_total,
             last_tx_total,
             last_instant: Instant::now(),
+            sample_count: 0,
         }
     }
 
@@ -73,7 +75,13 @@ impl SystemSampler {
         self.sys.refresh_cpu_usage();
         self.sys.refresh_memory();
         self.nets.refresh(true);
-        self.disks.refresh(true);
+
+        self.sample_count += 1;
+        if self.sample_count % 3 == 0 {
+            self.disks = Disks::new_with_refreshed_list();
+        } else {
+            self.disks.refresh(true);
+        }
 
         let cpu_percent = self.sys.global_cpu_usage() / 100.0;
         let mem_total = self.sys.total_memory();
