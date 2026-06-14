@@ -1334,6 +1334,91 @@ impl Ashell {
         });
     }
 
+    pub(crate) fn show_rename_dialog(
+        &mut self,
+        path: Vec<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let input = self.new_folder_name_input.clone();
+        let current_name = self.get_item_at_path(&path)
+            .map(|i| i.name().to_string())
+            .unwrap_or_default();
+        input.update(cx, |input, cx| {
+            input.set_value(&current_name, window, cx);
+        });
+        let view = cx.entity();
+        let path_clone = path.clone();
+        window.open_dialog(cx, move |dialog: Dialog, _window, cx| {
+            let view = view.clone();
+            let input = input.clone();
+            let path = path_clone.clone();
+            dialog
+                .title(t!("rename").to_string())
+                .w(px(400.))
+                .overlay_closable(true)
+                .content(move |content, window, cx| {
+                    let view = view.clone();
+                    let input = input.clone();
+                    let path = path.clone();
+                    content.child(
+                        v_flex()
+                            .gap_3()
+                            .child(
+                                v_flex()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .text_size(rems(0.833))
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child(t!("name")),
+                                    )
+                                    .child(Input::new(&input).tab_index(0)),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .justify_end()
+                                    .child(
+                                        Button::new("rename-dialog-cancel")
+                                            .ghost()
+                                            .label(t!("cancel"))
+                                            .on_click({
+                                                let view = view.clone();
+                                                move |_, window, cx| {
+                                                    window.close_dialog(cx);
+                                                    let _ = view.update(cx, |this, cx| {
+                                                        cx.notify();
+                                                    });
+                                                }
+                                            }),
+                                    )
+                                    .child(
+                                        Button::new("rename-dialog-save")
+                                            .primary()
+                                            .label(t!("save"))
+                                            .on_click({
+                                                let view = view.clone();
+                                                let input = input.clone();
+                                                let path = path.clone();
+                                                move |_, window, cx| {
+                                                    let name = input.read(cx).text().to_string();
+                                                    if !name.is_empty() {
+                                                        let _ = view.update(cx, |this, cx| {
+                                                            this.rename_node(&path, &name);
+                                                            cx.notify();
+                                                        });
+                                                    }
+                                                    window.close_dialog(cx);
+                                                }
+                                            }),
+                                    ),
+                            ),
+                    )
+                })
+        });
+    }
+
     pub(crate) fn show_custom_command_dialog(
         &mut self,
         edit_path: Option<Vec<usize>>,

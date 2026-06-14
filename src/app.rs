@@ -926,6 +926,42 @@ impl Ashell {
             _ => None,
         }
     }
+
+    pub(crate) fn rename_node(&mut self, path: &[usize], new_name: &str) {
+        let Some(item) = resolve_path(&self.command_tree, path) else { return };
+        if item.name() == new_name { return; }
+        let new_item = match item {
+            crate::config::CommandItem::Folder(f) => {
+                let mut f2 = f.clone();
+                f2.name = new_name.to_string();
+                crate::config::CommandItem::Folder(f2)
+            }
+            crate::config::CommandItem::Command(c) => {
+                let mut c2 = c.clone();
+                c2.name = new_name.to_string();
+                crate::config::CommandItem::Command(c2)
+            }
+        };
+        set_tree_item(&mut self.command_tree, path, new_item);
+        self.command_flat_items = flatten_command_tree(&self.command_tree);
+        self.config.set_custom_commands(self.command_tree.clone());
+        let _ = self.config.save();
+    }
+
+    pub(crate) fn update_command_string(&mut self, path: &[usize], new_cmd: &str) {
+        let Some(item) = resolve_path(&self.command_tree, path) else { return };
+        match item {
+            crate::config::CommandItem::Command(c) => {
+                let mut c2 = c.clone();
+                c2.command_string = new_cmd.to_string();
+                set_tree_item(&mut self.command_tree, path, crate::config::CommandItem::Command(c2));
+                self.command_flat_items = flatten_command_tree(&self.command_tree);
+                self.config.set_custom_commands(self.command_tree.clone());
+                let _ = self.config.save();
+            }
+            _ => {}
+        }
+    }
 }
 
 fn remove_tree_item(items: &mut Vec<crate::config::CommandItem>, path: &[usize]) {

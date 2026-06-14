@@ -457,11 +457,22 @@ impl Ashell {
                     let p = path.clone();
                     move |menu, _window, _cx| {
                         menu.item(
-                            PopupMenuItem::new(t!("edit")).on_click(
+                            PopupMenuItem::new(t!("execute")).on_click(
                                 _window.listener_for(&view, {
                                     let p2 = p.clone();
                                     move |this, _, window, cx| {
-                                        this.show_custom_command_dialog(Some(p2.clone()), window, cx);
+                                        this.navigate_into_folder(&p2);
+                                        cx.notify();
+                                    }
+                                }),
+                            ),
+                        )
+                        .item(
+                            PopupMenuItem::new(t!("rename")).on_click(
+                                _window.listener_for(&view, {
+                                    let p2 = p.clone();
+                                    move |this, _, window, cx| {
+                                        this.show_rename_dialog(p2.clone(), window, cx);
                                     }
                                 }),
                             ),
@@ -473,6 +484,17 @@ impl Ashell {
                                     move |this, _, _, cx| {
                                         this.delete_item_recursive(&p2);
                                         cx.notify();
+                                    }
+                                }),
+                            ),
+                        )
+                        .item(
+                            PopupMenuItem::new(t!("new_command")).on_click(
+                                _window.listener_for(&view, {
+                                    let p2 = p.clone();
+                                    move |this, _, window, cx| {
+                                        this.navigate_into_folder(&p2);
+                                        this.show_custom_command_dialog(None, window, cx);
                                     }
                                 }),
                             ),
@@ -550,17 +572,56 @@ impl Ashell {
                         let p = path.clone();
                         let is_fld = is_folder;
                         move |menu, _window, _cx| {
-                            menu.item(
-                                PopupMenuItem::new(t!("edit")).on_click(
+                            let mut m = menu;
+                            if is_fld {
+                                m = m.item(
+                                    PopupMenuItem::new(t!("execute")).on_click(
+                                        _window.listener_for(&view, {
+                                            let p2 = p.clone();
+                                            move |this, _, window, cx| {
+                                                this.navigate_into_folder(&p2);
+                                                cx.notify();
+                                            }
+                                        }),
+                                    ),
+                                );
+                            } else {
+                                m = m.item(
+                                    PopupMenuItem::new(t!("execute")).on_click(
+                                        _window.listener_for(&view, {
+                                            let p2 = p.clone();
+                                            move |this, _, window, cx| {
+                                                if let Some((cmd_str, _)) = this.get_command_at_path(&p2) {
+                                                    this.execute_command_string(&cmd_str, window, cx);
+                                                }
+                                            }
+                                        }),
+                                    ),
+                                );
+                            }
+                            m = m.item(
+                                PopupMenuItem::new(t!("rename")).on_click(
                                     _window.listener_for(&view, {
                                         let p2 = p.clone();
                                         move |this, _, window, cx| {
-                                            this.show_custom_command_dialog(Some(p2.clone()), window, cx);
+                                            this.show_rename_dialog(p2.clone(), window, cx);
                                         }
                                     }),
                                 ),
-                            )
-                            .item(
+                            );
+                            if !is_fld {
+                                m = m.item(
+                                    PopupMenuItem::new(t!("modify_command")).on_click(
+                                        _window.listener_for(&view, {
+                                            let p2 = p.clone();
+                                            move |this, _, window, cx| {
+                                                this.show_custom_command_dialog(Some(p2.clone()), window, cx);
+                                            }
+                                        }),
+                                    ),
+                                );
+                            }
+                            m = m.item(
                                 PopupMenuItem::new(t!("delete")).on_click(
                                     _window.listener_for(&view, {
                                         let p2 = p.clone();
@@ -570,7 +631,21 @@ impl Ashell {
                                         }
                                     }),
                                 ),
-                            )
+                            );
+                            if is_fld {
+                                m = m.item(
+                                    PopupMenuItem::new(t!("new_command")).on_click(
+                                        _window.listener_for(&view, {
+                                            let p2 = p.clone();
+                                            move |this, _, window, cx| {
+                                                this.navigate_into_folder(&p2);
+                                                this.show_custom_command_dialog(None, window, cx);
+                                            }
+                                        }),
+                                    ),
+                                );
+                            }
+                            m
                         }
                     })
                     .child(div().text_size(rems(0.75)).child(if is_folder { "📁" } else { "⚡" }))
