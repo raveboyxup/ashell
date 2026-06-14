@@ -1526,8 +1526,6 @@ impl Ashell {
         let is_new = edit_path.is_none();
         let title = if is_new { t!("new_command") } else { t!("edit_command") };
         let view = cx.entity();
-        let parent_path = if is_new { self.command_current_path.clone() }
-                         else { Vec::new() };
 
         window.open_dialog(cx, move |dialog: Dialog, _window, cx| {
             dialog
@@ -1539,7 +1537,6 @@ impl Ashell {
                     let name_input = name_input.clone();
                     let cmd_input = cmd_input.clone();
                     let edit_path = edit_path.clone();
-                    let parent_path = parent_path.clone();
                     move |content, window, cx| {
                         let view = view.clone();
                         let name_input = name_input.clone();
@@ -1620,7 +1617,6 @@ impl Ashell {
                                                             let name_input = name_input.clone();
                                                             let cmd_input = cmd_input.clone();
                                                             let edit_path = edit_path.clone();
-                                                            let parent_path = parent_path.clone();
                                                             move |_, window, cx| {
                                                                 let n = name_input.read(cx).text().to_string();
                                                                 let c = cmd_input.read(cx).text().to_string();
@@ -1637,8 +1633,9 @@ impl Ashell {
                                                                                 path,
                                                                                 CommandItem::Command(cmd));
                                                                         } else {
+                                                                            let target = this.command_current_path.clone();
                                                                             push_item_at(&mut this.command_tree,
-                                                                                &parent_path,
+                                                                                &target,
                                                                                 CommandItem::Command(cmd));
                                                                         }
                                                                         this.command_flat_items = flatten_command_tree(&this.command_tree);
