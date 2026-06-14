@@ -140,11 +140,11 @@ fn default_locale() -> String {
 }
 
 fn default_terminal_font_size() -> f32 {
-    13.0
+    18.0
 }
 
 fn default_ui_font_size() -> f32 {
-    12.0
+    14.0
 }
 
 pub fn default_ui_font_family() -> String {
@@ -247,7 +247,11 @@ impl ConfigStore {
     }
 
     pub fn monitoring_position(&self) -> &str {
-        &self.cache.monitoring_position
+        if self.cache.monitoring_position.is_empty() {
+            "Sidebar"
+        } else {
+            &self.cache.monitoring_position
+        }
     }
 
     pub fn set_monitoring_position(&mut self, pos: &str) {
