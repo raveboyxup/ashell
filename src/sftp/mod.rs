@@ -304,6 +304,10 @@ async fn run_sftp(
                         tab_id: tab_id.clone(),
                         text: format!("list failed: {err:#}"),
                     });
+                    let err_str = format!("{err:#}");
+                    if err_str.contains("closed") || err_str.contains("Connection refused") {
+                        break;
+                    }
                 }
             }
             SftpCommand::Preview(path) => match preview_impl(&sftp, &path).await {
@@ -783,6 +787,8 @@ async fn connect_and_authenticate(
 ) -> Result<Arc<russh::client::Handle<SftpClientHandler>>> {
     let config = Arc::new(client::Config {
         inactivity_timeout: Some(std::time::Duration::from_secs(600)),
+        keepalive_interval: Some(std::time::Duration::from_secs(10)),
+        keepalive_max: 3,
         ..Default::default()
     });
     let addr = format!("{}:{}", session.host, session.port);
