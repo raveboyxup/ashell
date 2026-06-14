@@ -302,7 +302,11 @@ impl Ashell {
             InputState::new(window, cx).placeholder(t!("command_name").to_string())
         });
         let command_dialog_cmd_input = cx.new(|cx| {
-            InputState::new(window, cx).placeholder(t!("command_string").to_string())
+            InputState::new(window, cx)
+                .multi_line(true)
+                .rows(8)
+                .context_menu(true)
+                .placeholder(t!("command_string").to_string())
         });
         let new_folder_name_input = cx.new(|cx| {
             InputState::new(window, cx).placeholder(t!("folder_name").to_string())

@@ -6,10 +6,11 @@ use gpui::{
 use gpui_component::{
     ActiveTheme as _, Disableable as _, IconName, Sizable as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
+    checkbox::Checkbox,
     dialog::Dialog,
     h_flex,
     input::Input,
-    menu::{DropdownMenu as _, PopupMenuItem},
+    menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenuItem},
     progress::Progress,
     scroll::{Scrollbar, ScrollbarShow},
     switch::Switch,
@@ -1451,6 +1452,7 @@ impl Ashell {
         } else {
             t!("edit_command")
         };
+        let append_cr = self.editor_append_cr;
         let view = cx.entity();
         let parent_path = if is_new { self.command_current_path.clone() } else { Vec::new() };
 
@@ -1469,6 +1471,7 @@ impl Ashell {
                         let view = view.clone();
                         let name_input = name_input.clone();
                         let cmd_input = cmd_input.clone();
+                        let cr_state = append_cr;
                         content.child(
                             v_flex()
                                 .gap_3()
@@ -1492,62 +1495,86 @@ impl Ashell {
                                                 .text_color(cx.theme().muted_foreground)
                                                 .child(t!("command_string")),
                                         )
-                                        .child(Input::new(&cmd_input).tab_index(1)),
+                                        .child(
+                                            Input::new(&cmd_input)
+                                                .tab_index(1)
+                                                .h(px(180.)),
+                                        ),
                                 )
                                 .child(
                                     h_flex()
                                         .gap_2()
-                                        .justify_end()
                                         .child(
-                                            Button::new("cmd-dialog-cancel")
-                                                .ghost()
-                                                .label(t!("cancel"))
+                                            Checkbox::new("cmd-dialog-append-cr")
+                                                .small()
+                                                .label(t!("append_cr").to_string())
+                                                .checked(cr_state)
                                                 .on_click({
                                                     let view = view.clone();
-                                                    move |_, window, cx| {
-                                                        window.close_dialog(cx);
-                                                        let _ = view.update(cx, |this, cx| {
+                                                    move |checked, _, cx| {
+                                                        view.update(cx, |this, cx| {
+                                                            this.editor_append_cr = *checked;
                                                             cx.notify();
                                                         });
                                                     }
                                                 }),
                                         )
                                         .child(
-                                            Button::new("cmd-dialog-save")
-                                                .primary()
-                                                .label(if is_new { t!("add") } else { t!("save") })
-                                                .on_click({
-                                                    let view = view.clone();
-                                                    let name_input = name_input.clone();
-                                                    let cmd_input = cmd_input.clone();
-                                                    let edit_path = edit_path.clone();
-                                                    let parent_path = parent_path.clone();
-                                                    move |_, window, cx| {
-                                                        let n = name_input.read(cx).text().to_string();
-                                                        let c = cmd_input.read(cx).text().to_string();
-                                                        if !n.is_empty() && !c.is_empty() {
-                                                            let _ = view.update(cx, |this, cx| {
-                                                                let cmd = crate::config::CommandEntry {
-                                                                    id: uuid::Uuid::new_v4().to_string(),
-                                                                    name: n,
-                                                                    command_string: c,
-                                                                    append_cr: true,
-                                                                };
-                                                                if let Some(ref path) = edit_path {
-                                                                    set_tree_item(&mut this.command_tree, path, crate::config::CommandItem::Command(cmd));
-                                                                } else {
-                                                                    push_item_at(&mut this.command_tree, &parent_path, crate::config::CommandItem::Command(cmd));
+                                            h_flex()
+                                                .flex_1()
+                                                .justify_end()
+                                                .gap_2()
+                                                .child(
+                                                    Button::new("cmd-dialog-cancel")
+                                                        .ghost()
+                                                        .label(t!("cancel"))
+                                                        .on_click({
+                                                            let view = view.clone();
+                                                            move |_, window, cx| {
+                                                                window.close_dialog(cx);
+                                                                let _ = view.update(cx, |this, cx| {
+                                                                    cx.notify();
+                                                                });
+                                                            }
+                                                        }),
+                                                )
+                                                .child(
+                                                    Button::new("cmd-dialog-save")
+                                                        .primary()
+                                                        .label(if is_new { t!("add") } else { t!("save") })
+                                                        .on_click({
+                                                            let view = view.clone();
+                                                            let name_input = name_input.clone();
+                                                            let cmd_input = cmd_input.clone();
+                                                            let edit_path = edit_path.clone();
+                                                            let parent_path = parent_path.clone();
+                                                            move |_, window, cx| {
+                                                                let n = name_input.read(cx).text().to_string();
+                                                                let c = cmd_input.read(cx).text().to_string();
+                                                                if !n.is_empty() && !c.is_empty() {
+                                                                    let _ = view.update(cx, |this, cx| {
+                                                                        let cmd = crate::config::CommandEntry {
+                                                                            id: uuid::Uuid::new_v4().to_string(),
+                                                                            name: n,
+                                                                            command_string: c,
+                                                                            append_cr: this.editor_append_cr,
+                                                                        };
+                                                                        if let Some(ref path) = edit_path {
+                                                                            set_tree_item(&mut this.command_tree, path, crate::config::CommandItem::Command(cmd));
+                                                                        } else {
+                                                                            push_item_at(&mut this.command_tree, &parent_path, crate::config::CommandItem::Command(cmd));
+                                                                        }
+                                                                        this.command_flat_items = flatten_command_tree(&this.command_tree);
+                                                                        this.command_flat_selection = this.command_flat_items.len().saturating_sub(1);
+                                                                        this.config.set_custom_commands(this.command_tree.clone());
+                                                                        let _ = this.config.save();
+                                                                        cx.notify();
+                                                                    });
                                                                 }
-                                                                this.command_flat_items = flatten_command_tree(&this.command_tree);
-                                                                this.command_flat_selection = this.command_flat_items.len().saturating_sub(1);
-                                                                this.config.set_custom_commands(this.command_tree.clone());
-                                                                let _ = this.config.save();
-                                                                cx.notify();
-                                                            });
-                                                        }
-                                                        window.close_dialog(cx);
-                                                    }
-                                                }),
+                                                                window.close_dialog(cx);
+                                                            }
+                                                        }),
+                                                ),
                                         ),
                                 ),
                         )
