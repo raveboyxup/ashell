@@ -1,7 +1,7 @@
 
 use gpui::{
-    Context, DefiniteLength, ElementId, Focusable as _, FontWeight, Hsla, InteractiveElement as _,
-    IntoElement, MouseButton, MouseDownEvent, TextAlign,
+    Context, ElementId, Focusable as _, FontWeight, Hsla, InteractiveElement as _,
+    IntoElement, MouseButton, MouseDownEvent,
     ParentElement as _, PathBuilder, Pixels, Render,
     StatefulInteractiveElement as _, Styled as _, Window,
     canvas, div, point, prelude::FluentBuilder as _, px, rems, uniform_list,
@@ -22,7 +22,6 @@ use gpui_component::{
 use rust_i18n::t;
 
 use crate::{
-    app::resolve_path,
     Ashell, MonitoringTab, SIDEBAR_WIDTH, TERMINAL_KEY_CONTEXT,
     sftp_ops::is_editable_text_file,
     sftp::format_mtime,
@@ -416,49 +415,128 @@ impl Ashell {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let view = cx.entity();
-        let sel = self.command_flat_selection;
-        let children = self.current_children();
-        let flat = self.command_flat_items.clone();
-        let cur_path = self.command_current_path.clone();
+        let gap_px = px(6.);
+        let tile_h = px(34.);
+        let root_folders: Vec<&crate::config::CommandItem> = self.command_tree.iter()
+            .filter(|i| i.is_folder())
+            .collect();
+        let selected_path = self.command_current_path.clone();
+        let has_selected = !selected_path.is_empty();
+        let cmd_items = if has_selected { self.current_children() } else { vec![] };
 
-        // --- Item tiles (horizontal wrap) ---
-        let tile_size = px(88.);
-        let tile_gap = px(8.);
-        let items: Vec<gpui::AnyElement> = children.iter().enumerate().map(|(ix, item)| {
-            let is_folder = item.is_folder();
-            let item_name = item.name().to_string();
-            let path = {
-                let mut p = self.command_current_path.clone();
-                p.push(ix);
-                p
-            };
-            let is_selected = ix == sel;
-
-            let bg = if is_selected {
-                cx.theme().primary.opacity(0.25)
-            } else {
-                cx.theme().muted.opacity(0.12)
-            };
-
+        // --- Zone A: folder bar ---
+        let folder_tiles: Vec<gpui::AnyElement> = root_folders.iter().enumerate().map(|(ix, item)| {
+            let path = vec![ix];
+            let is_active = selected_path == path;
+            let name = item.name().to_string();
+            let bg = if is_active { cx.theme().primary } else { cx.theme().muted.opacity(0.2) };
             div()
-                .id(("cmd-tile", ix))
-                .w(tile_size)
-                .h(tile_size)
-                .rounded(px(8.))
+                .id(("folder-tile", ix))
+                .h(tile_h)
+                .px_2()
+                .rounded(px(6.))
                 .flex()
-                .flex_col()
                 .items_center()
-                .justify_center()
                 .gap_1()
                 .bg(bg)
-                .hover(|style| style.bg(cx.theme().primary.opacity(0.2)))
+                .hover(|style| style.bg(cx.theme().primary.opacity(0.3)))
                 .cursor_pointer()
-                .on_mouse_down(
-                    MouseButton::Left,
-                    {
+                .on_mouse_down(MouseButton::Left, {
+                    let p = path.clone();
+                    window.listener_for(&view, move |this, _, _, cx| {
+                        if this.command_current_path == p {
+                            this.command_current_path.clear();
+                        } else {
+                            this.command_current_path = p.clone();
+                        }
+                        cx.notify();
+                    })
+                })
+                .context_menu({
+                    let view = cx.entity();
+                    let p = path.clone();
+                    move |menu, _window, _cx| {
+                        menu.item(
+                            PopupMenuItem::new(t!("edit")).on_click(
+                                _window.listener_for(&view, {
+                                    let p2 = p.clone();
+                                    move |this, _, window, cx| {
+                                        this.show_custom_command_dialog(Some(p2.clone()), window, cx);
+                                    }
+                                }),
+                            ),
+                        )
+                        .item(
+                            PopupMenuItem::new(t!("delete")).on_click(
+                                _window.listener_for(&view, {
+                                    let p2 = p.clone();
+                                    move |this, _, _, cx| {
+                                        this.delete_item_recursive(&p2);
+                                        cx.notify();
+                                    }
+                                }),
+                            ),
+                        )
+                    }
+                })
+                .child(div().text_size(rems(0.75)).child("📁"))
+                .child(div().text_size(rems(0.833)).font_weight(FontWeight::SEMIBOLD).text_color(cx.theme().foreground).child(name))
+                .into_any_element()
+        }).collect();
+
+        let zone_a: gpui::AnyElement = if folder_tiles.is_empty() {
+            div().flex_none().h(tile_h).into_any_element()
+        } else {
+            h_flex()
+                .flex_none()
+                .h(tile_h)
+                .px_2()
+                .gap(gap_px)
+                .items_center()
+                .border_b_1()
+                .border_color(cx.theme().border.opacity(0.35))
+                .children(folder_tiles)
+                .into_any_element()
+        };
+
+        // --- Zone B: command tiles ---
+        let zone_b: gpui::AnyElement = if !has_selected {
+            v_flex()
+                .flex_1()
+                .items_center()
+                .justify_center()
+                .child(div().text_size(rems(0.833)).text_color(cx.theme().muted_foreground).child(t!("no_custom_commands")))
+                .into_any_element()
+        } else if cmd_items.is_empty() {
+            v_flex()
+                .flex_1()
+                .items_center()
+                .justify_center()
+                .child(div().text_size(rems(0.833)).text_color(cx.theme().muted_foreground).child(t!("no_custom_commands")))
+                .into_any_element()
+        } else {
+            let tiles: Vec<gpui::AnyElement> = cmd_items.iter().enumerate().map(|(ix, item)| {
+                let is_folder = item.is_folder();
+                let name = item.name().to_string();
+                let path = {
+                    let mut p = selected_path.clone();
+                    p.push(ix);
+                    p
+                };
+                div()
+                    .id(("cmd-tile", ix))
+                    .h(tile_h)
+                    .px_2()
+                    .rounded(px(6.))
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .bg(cx.theme().muted.opacity(0.12))
+                    .hover(|style| style.bg(cx.theme().primary.opacity(0.2)))
+                    .cursor_pointer()
+                    .on_mouse_down(MouseButton::Left, {
                         let p = path.clone();
                         window.listener_for(&view, move |this, _, window, cx| {
-                            this.command_flat_selection = ix;
                             if is_folder {
                                 this.navigate_into_folder(&p);
                             } else if let Some((cmd_str, _)) = this.get_command_at_path(&p) {
@@ -466,20 +544,18 @@ impl Ashell {
                             }
                             cx.notify();
                         })
-                    },
-                )
-                .context_menu({
-                    let view = cx.entity();
-                    let p_delete = path.clone();
-                    let is_fld = is_folder;
-                    move |menu, _window, _cx| {
-                        if is_fld {
+                    })
+                    .context_menu({
+                        let view = cx.entity();
+                        let p = path.clone();
+                        let is_fld = is_folder;
+                        move |menu, _window, _cx| {
                             menu.item(
                                 PopupMenuItem::new(t!("edit")).on_click(
                                     _window.listener_for(&view, {
-                                        let p = p_delete.clone();
+                                        let p2 = p.clone();
                                         move |this, _, window, cx| {
-                                            this.show_custom_command_dialog(Some(p.clone()), window, cx);
+                                            this.show_custom_command_dialog(Some(p2.clone()), window, cx);
                                         }
                                     }),
                                 ),
@@ -487,72 +563,21 @@ impl Ashell {
                             .item(
                                 PopupMenuItem::new(t!("delete")).on_click(
                                     _window.listener_for(&view, {
-                                        let p = p_delete.clone();
+                                        let p2 = p.clone();
                                         move |this, _, _, cx| {
-                                            this.delete_item_recursive(&p);
-                                            cx.notify();
-                                        }
-                                    }),
-                                ),
-                            )
-                        } else {
-                            menu.item(
-                                PopupMenuItem::new(t!("edit")).on_click(
-                                    _window.listener_for(&view, {
-                                        let p = p_delete.clone();
-                                        move |this, _, window, cx| {
-                                            this.show_custom_command_dialog(Some(p.clone()), window, cx);
-                                        }
-                                    }),
-                                ),
-                            )
-                            .item(
-                                PopupMenuItem::new(t!("delete")).on_click(
-                                    _window.listener_for(&view, {
-                                        let p = p_delete.clone();
-                                        move |this, _, _, cx| {
-                                            this.delete_item_recursive(&p);
+                                            this.delete_item_recursive(&p2);
                                             cx.notify();
                                         }
                                     }),
                                 ),
                             )
                         }
-                    }
-                })
-                .child(
-                    div()
-                        .text_size(rems(0.75))
-                        .text_color(cx.theme().muted_foreground)
-                        .child(if is_folder { "📁" } else { "⚡" }),
-                )
-                .child(
-                    div()
-                        .text_size(rems(0.833))
-                        .font_weight(if is_folder { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
-                        .text_color(cx.theme().foreground)
-                        .text_align(TextAlign::Center)
-                        .line_height(DefiniteLength::Fraction(1.2))
-                        .overflow_hidden()
-                        .px_1()
-                        .child(item_name),
-                )
-                .into_any_element()
-        }).collect();
+                    })
+                    .child(div().text_size(rems(0.75)).child(if is_folder { "📁" } else { "⚡" }))
+                    .child(div().text_size(rems(0.833)).font_weight(if is_folder { FontWeight::SEMIBOLD } else { FontWeight::NORMAL }).text_color(cx.theme().foreground).child(name))
+                    .into_any_element()
+            }).collect();
 
-        let content_area = if items.is_empty() {
-            v_flex()
-                .flex_1()
-                .items_center()
-                .justify_center()
-                .child(
-                    div()
-                        .text_size(rems(0.917))
-                        .text_color(cx.theme().muted_foreground)
-                        .child(t!("no_custom_commands")),
-                )
-                .into_any_element()
-        } else {
             div()
                 .flex_1()
                 .min_h(px(0.))
@@ -563,15 +588,16 @@ impl Ashell {
                 .flex_wrap()
                 .content_start()
                 .items_start()
-                .gap(tile_gap)
-                .px(tile_gap)
-                .py(tile_gap)
+                .gap(gap_px)
+                .px_2()
+                .py_1()
                 .w_full()
-                .children(items)
+                .children(tiles)
                 .into_any_element()
         };
 
-        let bottom = h_flex()
+        // --- Zone C: input bar ---
+        let zone_c = h_flex()
             .flex_none()
             .h(px(34.))
             .px_2()
@@ -624,73 +650,9 @@ impl Ashell {
                     )
                 }
             })
-            .child(self.render_breadcrumb(&cur_path, window, cx))
-            .child(content_area)
-            .child(bottom)
-    }
-
-    fn render_breadcrumb(
-        &self,
-        cur_path: &[usize],
-        window: &Window,
-        cx: &Context<Self>,
-    ) -> impl IntoElement {
-        if cur_path.is_empty() {
-            return div().into_any_element();
-        }
-        let view = cx.entity();
-        let tree = &self.command_tree;
-        let mut segments: Vec<gpui::AnyElement> = Vec::new();
-
-        segments.push(
-            div()
-                .id("breadcrumb-root")
-                .cursor_pointer()
-                .text_size(rems(0.833))
-                .text_color(cx.theme().primary)
-                .hover(|style| style.underline())
-                .child(t!("custom_commands"))
-                .on_mouse_down(MouseButton::Left, window.listener_for(&view, move |this, _, _, cx| {
-                    this.command_current_path.clear();
-                    cx.notify();
-                }))
-                .into_any_element()
-        );
-
-        let mut acc_path = Vec::new();
-        for (i, &idx) in cur_path.iter().enumerate() {
-            acc_path.push(idx);
-            let item = resolve_path(tree, &acc_path);
-            let name = item.map(|i| i.name().to_string()).unwrap_or_default();
-            let acc = acc_path.clone();
-            segments.push(div().child(" / ").into_any_element());
-            segments.push(
-                div()
-                    .id(("breadcrumb-seg", i))
-                    .cursor_pointer()
-                    .text_size(rems(0.833))
-                    .text_color(cx.theme().primary)
-                    .hover(|style| style.underline())
-                    .child(name)
-                    .on_mouse_down(MouseButton::Left, window.listener_for(&view, move |this, _, _, cx| {
-                        this.command_current_path = acc.clone();
-                        cx.notify();
-                    }))
-                    .into_any_element()
-            );
-        }
-
-        h_flex()
-            .flex_none()
-            .h(px(30.))
-            .px_2()
-            .items_center()
-            .gap_0()
-            .border_b_1()
-            .border_color(cx.theme().border.opacity(0.35))
-            .bg(cx.theme().tab_bar)
-            .children(segments)
-            .into_any_element()
+            .child(zone_a)
+            .child(zone_b)
+            .child(zone_c)
     }
 
     fn render_monitoring_panel(
