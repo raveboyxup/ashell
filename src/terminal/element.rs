@@ -352,7 +352,7 @@ impl TerminalElement {
                 rects.push(LayoutRect {
                     row: render_cell.row,
                     col: render_cell.col,
-                    cells: 1,
+                    cells: if cell.flags.contains(Flags::WIDE_CHAR) { 2 } else { 1 },
                     color: if selected {
                         cx.theme().selection
                     } else if cell.flags.contains(Flags::INVERSE) {
