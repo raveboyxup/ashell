@@ -1,4 +1,4 @@
-use gpui::{Context, PathPromptOptions, Pixels, Point, Window};
+use gpui::{ClipboardItem, Context, PathPromptOptions, Pixels, Point, Window};
 
 use crate::{
     Ashell, SftpContextMenuState,
@@ -127,6 +127,14 @@ impl Ashell {
             return;
         };
         self.download_sftp_entry(menu.remote_path, window, cx);
+        cx.notify();
+    }
+
+    pub(crate) fn trigger_sftp_context_copy_path(&mut self, cx: &mut Context<Self>) {
+        let Some(menu) = self.sftp_context_menu.take() else {
+            return;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(menu.remote_path));
         cx.notify();
     }
 
