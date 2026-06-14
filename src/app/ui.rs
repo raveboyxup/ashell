@@ -77,155 +77,6 @@ impl Ashell {
     ) -> impl IntoElement {
         let active_sftp = self.active_sftp();
 
-        let header = h_flex()
-            .flex_none()
-            .h(px(34.))
-            .items_center()
-                    .gap_2()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().tab_bar)
-            .when_some(active_sftp.clone(), |this, sftp| {
-                let selected_entries = sftp.selected_entries.clone();
-                this.child(
-                    Button::new("sftp-refresh")
-                        .ghost()
-                        .small()
-                        .icon(IconName::ArrowRight)
-                        .label(t!("refresh").to_string())
-                        .on_click(cx.listener(|this, _, _, cx| this.refresh_sftp(cx))),
-                )
-                .child(
-                    Button::new("sftp-new-folder")
-                        .ghost()
-                        .small()
-                        .icon(IconName::Folder)
-                        .label(t!("new_folder").to_string())
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.sftp_creating_folder = true;
-                            this.sftp_new_folder_input.update(cx, |input, cx| {
-                                input.set_value("", window, cx);
-                                input.focus_handle(cx).focus(window, cx);
-                            });
-                            cx.notify();
-                        })),
-                )
-                .child(
-                    Button::new("sftp-delete-selected")
-                        .ghost()
-                        .small()
-                        .icon(IconName::Close)
-                        .label(if selected_entries.is_empty() {
-                            t!("delete_selected").to_string()
-                        } else {
-                            format!(
-                                "{} ({})",
-                                t!("delete_selected").to_string(),
-                                selected_entries.len()
-                            )
-                        })
-                        .disabled(selected_entries.is_empty())
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.show_delete_confirm_dialog(window, cx);
-                        })),
-                )
-                .child(
-                    Button::new("sftp-upload-file")
-                        .ghost()
-                        .small()
-                        .icon(IconName::Plus)
-                        .label(t!("upload_file").to_string())
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.upload_sftp_files(window, cx)),
-                        ),
-                )
-                .child(
-                    Button::new("sftp-upload-folder")
-                        .ghost()
-                        .small()
-                        .icon(IconName::Folder)
-                        .label(t!("upload_folder").to_string())
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.upload_sftp_folder(window, cx)),
-                        ),
-                )
-                .child(
-                    Button::new("sftp-download-selected")
-                        .ghost()
-                        .small()
-                        .icon(IconName::ArrowDown)
-                        .label(if selected_entries.is_empty() {
-                            t!("download").to_string()
-                        } else {
-                            t!("download_count", count = selected_entries.len()).to_string()
-                        })
-                        .disabled(selected_entries.is_empty())
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.download_selected_sftp_entries(window, cx);
-                        })),
-                )
-                .child(
-                    Checkbox::new("sftp-show-hidden")
-                        .small()
-                        .label(t!("hidden").to_string())
-                        .checked(self.show_hidden_files)
-                        .tab_stop(false)
-                        .on_click(cx.listener(|this, checked, _, cx| {
-                            this.show_hidden_files = *checked;
-                            this.config.set_show_hidden_files(*checked);
-                            let _ = this.config.save();
-                            cx.notify();
-                        })),
-                )
-            })
-            .child(
-                Button::new("open-transfers")
-                    .ghost()
-                    .small()
-                    .icon(IconName::ArrowDown)
-                    .label(t!("transfers").to_string())
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.show_transfers_dialog(window, cx);
-                    })),
-            )
-            .child(
-                Button::new("sftp-minimize-toggle")
-                    .ghost()
-                    .small()
-                    .icon(if self.sftp_panel_minimized { IconName::ChevronUp } else { IconName::ChevronDown })
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        let state = this.body_panels.clone();
-                        let minimized = this.sftp_panel_minimized;
-                        
-                        if !minimized {
-                            // Going to minimized: save the current size
-                            let sizes = state.read(cx).sizes();
-                            if sizes.len() > 1 {
-                                this.prev_monitoring_size = Some(sizes[1]);
-                            }
-                            this.sftp_panel_minimized = true;
-                        } else {
-                            // Going to unminimized: restore the old size
-                            this.sftp_panel_minimized = false;
-                            let prev_size = this.prev_monitoring_size.unwrap_or(px(328.));
-                            
-                            cx.on_next_frame(window, move |this: &mut crate::app::Ashell, window: &mut gpui::Window, cx: &mut gpui::Context<crate::app::Ashell>| {
-                                cx.on_next_frame(window, move |this: &mut crate::app::Ashell, window: &mut gpui::Window, cx: &mut gpui::Context<crate::app::Ashell>| {
-                                    this.body_panels.update(cx, |state, cx| {
-                                        let sizes = state.sizes();
-                                        let c_size_f32: f32 = sizes.iter().map(|s| s.as_f32()).sum();
-                                        let c_size = px(c_size_f32);
-                                        let target_p0 = c_size - prev_size;
-                                        state.resize_panel(0, target_p0, window, cx);
-                                    });
-                                    cx.notify();
-                                });
-                            });
-                        }
-                        cx.notify();
-                    })),
-            );
-
         let Some(sftp) = active_sftp else {
             let mut panel = v_flex()
                 .gap_0()
@@ -237,8 +88,6 @@ impl Ashell {
             } else {
                 panel = panel.flex_none();
             }
-            
-            panel = panel.child(header);
             
             if !self.sftp_panel_minimized {
                 panel = panel.child(
@@ -298,8 +147,7 @@ impl Ashell {
                         .collect();
                     this.upload_sftp_files_batch(paths_to_upload, cx);
                 }),
-            )
-            .child(header);
+            );
 
         if !self.sftp_panel_minimized {
             panel = panel
@@ -2162,75 +2010,215 @@ impl Render for Ashell {
         let is_remote = self.selected_monitoring_tab == MonitoringTab::RemoteFiles;
         let active_sftp = self.active_sftp();
 
-        let shared_header = h_flex()
-            .flex_none()
-            .h(px(34.))
-            .px_3()
-            .items_center()
-            .gap_2()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().tab_bar)
-            .child(
-                div()
-                    .cursor_pointer()
-                    .text_size(rems(1.0))
-                    .font_weight(if is_remote {
-                        FontWeight::SEMIBOLD
-                    } else {
-                        FontWeight::NORMAL
-                    })
-                    .text_color(if is_remote {
-                        cx.theme().primary
-                    } else {
-                        cx.theme().muted_foreground
-                    })
-                    .on_mouse_down(MouseButton::Left, cx.listener(
-                        |this, _, _, cx| {
-                            this.selected_monitoring_tab = MonitoringTab::RemoteFiles;
-                            cx.notify();
-                        },
-                    ))
-                    .child(t!("remote_files")),
-            )
-            .child(
-                div()
-                    .cursor_pointer()
-                    .text_size(rems(1.0))
-                    .font_weight(if is_remote {
-                        FontWeight::NORMAL
-                    } else {
-                        FontWeight::SEMIBOLD
-                    })
-                    .text_color(if is_remote {
-                        cx.theme().muted_foreground
-                    } else {
-                        cx.theme().primary
-                    })
-                    .on_mouse_down(MouseButton::Left, cx.listener(
-                        |this, _, _, cx| {
-                            this.selected_monitoring_tab = MonitoringTab::CustomCommands;
-                            cx.notify();
-                        },
-                    ))
-                    .child(t!("custom_commands")),
-            )
-            .child(div().flex_1())
-            .when(!is_remote, |this| {
-                this.child(
-                    Button::new("cmd-add")
-                        .ghost()
-                        .xsmall()
-                        .icon(IconName::Plus)
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.show_custom_command_dialog(None, window, cx);
-                        })),
-                )
-            });
-
         let monitoring_panel = v_flex()
             .size_full()
-            .child(shared_header)
+            .child(
+                h_flex()
+                    .flex_none()
+                    .h(px(34.))
+                    .px_3()
+                    .items_center()
+                    .gap_2()
+                    .border_b_1()
+                    .border_color(cx.theme().border)
+                    .bg(cx.theme().tab_bar)
+                    .child(
+                        div()
+                            .cursor_pointer()
+                            .text_size(rems(1.0))
+                            .font_weight(if is_remote {
+                                FontWeight::SEMIBOLD
+                            } else {
+                                FontWeight::NORMAL
+                            })
+                            .text_color(if is_remote {
+                                cx.theme().primary
+                            } else {
+                                cx.theme().muted_foreground
+                            })
+                            .on_mouse_down(MouseButton::Left, cx.listener(
+                                |this, _, _, cx| {
+                                    this.selected_monitoring_tab = MonitoringTab::RemoteFiles;
+                                    cx.notify();
+                                },
+                            ))
+                            .child(t!("remote_files")),
+                    )
+                    .child(
+                        div()
+                            .cursor_pointer()
+                            .text_size(rems(1.0))
+                            .font_weight(if is_remote {
+                                FontWeight::NORMAL
+                            } else {
+                                FontWeight::SEMIBOLD
+                            })
+                            .text_color(if is_remote {
+                                cx.theme().muted_foreground
+                            } else {
+                                cx.theme().primary
+                            })
+                            .on_mouse_down(MouseButton::Left, cx.listener(
+                                |this, _, _, cx| {
+                                    this.selected_monitoring_tab = MonitoringTab::CustomCommands;
+                                    cx.notify();
+                                },
+                            ))
+                            .child(t!("custom_commands")),
+                    )
+                    .child(div().flex_1())
+                    .when(is_remote, |this| {
+                        if let Some(ref sftp) = active_sftp {
+                            let selected_entries = sftp.selected_entries.clone();
+                            this.child(
+                                Button::new("sftp-refresh")
+                                    .ghost()
+                                    .small()
+                                    .icon(IconName::ArrowRight)
+                                    .label(t!("refresh").to_string())
+                                    .on_click(cx.listener(|this, _, _, cx| this.refresh_sftp(cx))),
+                            )
+                            .child(
+                                Button::new("sftp-new-folder")
+                                    .ghost()
+                                    .small()
+                                    .icon(IconName::Folder)
+                                    .label(t!("new_folder").to_string())
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.sftp_creating_folder = true;
+                                        this.sftp_new_folder_input.update(cx, |input, cx| {
+                                            input.set_value("", window, cx);
+                                            input.focus_handle(cx).focus(window, cx);
+                                        });
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("sftp-delete-selected")
+                                    .ghost()
+                                    .small()
+                                    .icon(IconName::Close)
+                                    .label(if selected_entries.is_empty() {
+                                        t!("delete_selected").to_string()
+                                    } else {
+                                        format!(
+                                            "{} ({})",
+                                            t!("delete_selected").to_string(),
+                                            selected_entries.len()
+                                        )
+                                    })
+                                    .disabled(selected_entries.is_empty())
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.show_delete_confirm_dialog(window, cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new("sftp-upload-file")
+                                    .ghost()
+                                    .small()
+                                    .icon(IconName::Plus)
+                                    .label(t!("upload_file").to_string())
+                                    .on_click(
+                                        cx.listener(|this, _, window, cx| this.upload_sftp_files(window, cx)),
+                                    ),
+                            )
+                            .child(
+                                Button::new("sftp-upload-folder")
+                                    .ghost()
+                                    .small()
+                                    .icon(IconName::Folder)
+                                    .label(t!("upload_folder").to_string())
+                                    .on_click(
+                                        cx.listener(|this, _, window, cx| this.upload_sftp_folder(window, cx)),
+                                    ),
+                            )
+                            .child(
+                                Button::new("sftp-download-selected")
+                                    .ghost()
+                                    .small()
+                                    .icon(IconName::ArrowDown)
+                                    .label(if selected_entries.is_empty() {
+                                        t!("download").to_string()
+                                    } else {
+                                        t!("download_count", count = selected_entries.len()).to_string()
+                                    })
+                                    .disabled(selected_entries.is_empty())
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.download_selected_sftp_entries(window, cx);
+                                    })),
+                            )
+                            .child(
+                                Checkbox::new("sftp-show-hidden")
+                                    .small()
+                                    .label(t!("hidden").to_string())
+                                    .checked(self.show_hidden_files)
+                                    .tab_stop(false)
+                                    .on_click(cx.listener(|this, checked, _, cx| {
+                                        this.show_hidden_files = *checked;
+                                        this.config.set_show_hidden_files(*checked);
+                                        let _ = this.config.save();
+                                        cx.notify();
+                                    })),
+                            )
+                        } else {
+                            this
+                        }
+                    })
+                    .when(!is_remote, |this| {
+                        this.child(
+                            Button::new("cmd-add")
+                                .ghost()
+                                .xsmall()
+                                .icon(IconName::Plus)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.show_custom_command_dialog(None, window, cx);
+                                })),
+                        )
+                    })
+                    .child(
+                        Button::new("open-transfers")
+                            .ghost()
+                            .small()
+                            .icon(IconName::ArrowDown)
+                            .label(t!("transfers").to_string())
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.show_transfers_dialog(window, cx);
+                            })),
+                    )
+                    .child(
+                        Button::new("sftp-minimize-toggle")
+                            .ghost()
+                            .small()
+                            .icon(if self.sftp_panel_minimized { IconName::ChevronUp } else { IconName::ChevronDown })
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                let state = this.body_panels.clone();
+                                let minimized = this.sftp_panel_minimized;
+                                if !minimized {
+                                    let sizes = state.read(cx).sizes();
+                                    if sizes.len() > 1 {
+                                        this.prev_monitoring_size = Some(sizes[1]);
+                                    }
+                                    this.sftp_panel_minimized = true;
+                                } else {
+                                    this.sftp_panel_minimized = false;
+                                    let prev_size = this.prev_monitoring_size.unwrap_or(px(328.));
+                                    cx.on_next_frame(window, move |this: &mut crate::app::Ashell, window: &mut gpui::Window, cx: &mut gpui::Context<crate::app::Ashell>| {
+                                        cx.on_next_frame(window, move |this: &mut crate::app::Ashell, window: &mut gpui::Window, cx: &mut gpui::Context<crate::app::Ashell>| {
+                                            this.body_panels.update(cx, |state, cx| {
+                                                let sizes = state.sizes();
+                                                let c_size_f32: f32 = sizes.iter().map(|s| s.as_f32()).sum();
+                                                let c_size = px(c_size_f32);
+                                                let target_p0 = c_size - prev_size;
+                                                state.resize_panel(0, target_p0, window, cx);
+                                            });
+                                            cx.notify();
+                                        });
+                                    });
+                                }
+                                cx.notify();
+                            })),
+                    )
+            )
             .child(if is_remote {
                 self.render_sftp_panel(window, cx).into_any_element()
             } else {
