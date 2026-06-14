@@ -218,14 +218,14 @@ pub(crate) struct CommandContextMenu {
     pub(crate) position: gpui::Point<Pixels>,
 }
 
-pub(crate) fn flatten_command_tree(items: &[crate::config::CommandItem]) -> Vec<FlatCommandItem> {
+pub(crate) fn flatten_command_tree(items: &[crate::session::config::CommandItem]) -> Vec<FlatCommandItem> {
     let mut result = Vec::new();
     flatten_recursive(items, &mut Vec::new(), &mut result, 0);
     result
 }
 
 fn flatten_recursive(
-    items: &[crate::config::CommandItem],
+    items: &[crate::session::config::CommandItem],
     parent_path: &mut Vec<usize>,
     result: &mut Vec<FlatCommandItem>,
     depth: usize,
@@ -233,7 +233,7 @@ fn flatten_recursive(
     for (i, item) in items.iter().enumerate() {
         parent_path.push(i);
         match item {
-            crate::config::CommandItem::Folder(f) => {
+            crate::session::config::CommandItem::Folder(f) => {
                 result.push(FlatCommandItem {
                     depth,
                     is_folder: true,
@@ -248,7 +248,7 @@ fn flatten_recursive(
                     flatten_recursive(&f.children, parent_path, result, depth + 1);
                 }
             }
-            crate::config::CommandItem::Command(c) => {
+            crate::session::config::CommandItem::Command(c) => {
                 result.push(FlatCommandItem {
                     depth,
                     is_folder: false,
@@ -306,7 +306,7 @@ pub(crate) struct Ashell {
     pub(crate) sftp_creating_folder: bool,
     pub(crate) sftp_new_folder_input: Entity<InputState>,
     pub(crate) sftp_delete_scroll_handle: gpui::ScrollHandle,
-    pub(crate) command_tree: Vec<crate::config::CommandItem>,
+    pub(crate) command_tree: Vec<crate::session::config::CommandItem>,
     pub(crate) command_flat_selection: usize,
     pub(crate) command_flat_items: Vec<FlatCommandItem>,
     pub(crate) command_current_path: Vec<usize>,
@@ -637,7 +637,7 @@ impl Ashell {
                         .next()
                         .unwrap_or(&trimmed)
                         .to_string();
-                    self.command_tree.push(crate::config::CommandItem::Command(crate::config::CommandEntry {
+                    self.command_tree.push(crate::session::config::CommandItem::Command(crate::session::config::CommandEntry {
                         id: uuid::Uuid::new_v4().to_string(),
                         name,
                         command_string: trimmed,
@@ -1027,13 +1027,13 @@ impl Ashell {
     }
 
     pub(crate) fn add_command_folder(&mut self, name: &str) {
-        let folder = crate::config::CommandFolder {
+        let folder = crate::session::config::CommandFolder {
             id: uuid::Uuid::new_v4().to_string(),
             name: name.to_string(),
             children: Vec::new(),
             is_expanded: true,
         };
-        self.command_tree.push(crate::config::CommandItem::Folder(folder));
+        self.command_tree.push(crate::session::config::CommandItem::Folder(folder));
         self.command_flat_items = flatten_command_tree(&self.command_tree);
         self.command_flat_selection = self.command_flat_items.len().saturating_sub(1);
         self.config.set_custom_commands(self.command_tree.clone());
@@ -1041,13 +1041,13 @@ impl Ashell {
     }
 
     pub(crate) fn add_command_item(&mut self, name: &str, cmd: &str, append_cr: bool) {
-        let entry = crate::config::CommandEntry {
+        let entry = crate::session::config::CommandEntry {
             id: uuid::Uuid::new_v4().to_string(),
             name: name.to_string(),
             command_string: cmd.to_string(),
             append_cr,
         };
-        push_item_at(&mut self.command_tree, &self.command_current_path, crate::config::CommandItem::Command(entry));
+        push_item_at(&mut self.command_tree, &self.command_current_path, crate::session::config::CommandItem::Command(entry));
         self.command_flat_items = flatten_command_tree(&self.command_tree);
         self.command_flat_selection = self.command_flat_items.len().saturating_sub(1);
         self.config.set_custom_commands(self.command_tree.clone());
@@ -1062,18 +1062,18 @@ impl Ashell {
         self.command_current_path.pop();
     }
 
-    pub(crate) fn current_children(&self) -> Vec<&crate::config::CommandItem> {
+    pub(crate) fn current_children(&self) -> Vec<&crate::session::config::CommandItem> {
         if self.command_current_path.is_empty() {
             return self.command_tree.iter().collect();
         }
         let items = resolve_path(&self.command_tree, &self.command_current_path);
         items.map(|i| match i {
-            crate::config::CommandItem::Folder(f) => f.children.iter().collect(),
-            crate::config::CommandItem::Command(_) => vec![],
+            crate::session::config::CommandItem::Folder(f) => f.children.iter().collect(),
+            crate::session::config::CommandItem::Command(_) => vec![],
         }).unwrap_or_default()
     }
 
-    pub(crate) fn get_item_at_path(&self, path: &[usize]) -> Option<&crate::config::CommandItem> {
+    pub(crate) fn get_item_at_path(&self, path: &[usize]) -> Option<&crate::session::config::CommandItem> {
         resolve_path(&self.command_tree, path)
     }
 
@@ -1094,7 +1094,7 @@ impl Ashell {
     pub(crate) fn get_command_at_path(&self, path: &[usize]) -> Option<(String, bool)> {
         let item = resolve_path(&self.command_tree, path)?;
         match item {
-            crate::config::CommandItem::Command(c) => Some((c.command_string.clone(), c.append_cr)),
+            crate::session::config::CommandItem::Command(c) => Some((c.command_string.clone(), c.append_cr)),
             _ => None,
         }
     }
@@ -1103,15 +1103,15 @@ impl Ashell {
         let Some(item) = resolve_path(&self.command_tree, path) else { return };
         if item.name() == new_name { return; }
         let new_item = match item {
-            crate::config::CommandItem::Folder(f) => {
+            crate::session::config::CommandItem::Folder(f) => {
                 let mut f2 = f.clone();
                 f2.name = new_name.to_string();
-                crate::config::CommandItem::Folder(f2)
+                crate::session::config::CommandItem::Folder(f2)
             }
-            crate::config::CommandItem::Command(c) => {
+            crate::session::config::CommandItem::Command(c) => {
                 let mut c2 = c.clone();
                 c2.name = new_name.to_string();
-                crate::config::CommandItem::Command(c2)
+                crate::session::config::CommandItem::Command(c2)
             }
         };
         set_tree_item(&mut self.command_tree, path, new_item);
@@ -1123,10 +1123,10 @@ impl Ashell {
     pub(crate) fn update_command_string(&mut self, path: &[usize], new_cmd: &str) {
         let Some(item) = resolve_path(&self.command_tree, path) else { return };
         match item {
-            crate::config::CommandItem::Command(c) => {
+            crate::session::config::CommandItem::Command(c) => {
                 let mut c2 = c.clone();
                 c2.command_string = new_cmd.to_string();
-                set_tree_item(&mut self.command_tree, path, crate::config::CommandItem::Command(c2));
+                set_tree_item(&mut self.command_tree, path, crate::session::config::CommandItem::Command(c2));
                 self.command_flat_items = flatten_command_tree(&self.command_tree);
                 self.config.set_custom_commands(self.command_tree.clone());
                 let _ = self.config.save();
@@ -1136,29 +1136,29 @@ impl Ashell {
     }
 }
 
-fn remove_tree_item(items: &mut Vec<crate::config::CommandItem>, path: &[usize]) {
+fn remove_tree_item(items: &mut Vec<crate::session::config::CommandItem>, path: &[usize]) {
     if path.is_empty() { return; }
     let idx = path[0];
     if idx >= items.len() { return; }
     if path.len() == 1 {
         items.remove(idx);
-    } else if let crate::config::CommandItem::Folder(f) = &mut items[idx] {
+    } else if let crate::session::config::CommandItem::Folder(f) = &mut items[idx] {
         remove_tree_item(&mut f.children, &path[1..]);
     }
 }
 
-pub(crate) fn set_tree_item(items: &mut [crate::config::CommandItem], path: &[usize], new_item: crate::config::CommandItem) {
+pub(crate) fn set_tree_item(items: &mut [crate::session::config::CommandItem], path: &[usize], new_item: crate::session::config::CommandItem) {
     if path.is_empty() { return; }
     let idx = path[0];
     if idx >= items.len() { return; }
     if path.len() == 1 {
         items[idx] = new_item;
-    } else if let crate::config::CommandItem::Folder(f) = &mut items[idx] {
+    } else if let crate::session::config::CommandItem::Folder(f) = &mut items[idx] {
         set_tree_item(&mut f.children, &path[1..], new_item);
     }
 }
 
-pub(crate) fn resolve_path<'a>(items: &'a [crate::config::CommandItem], path: &[usize]) -> Option<&'a crate::config::CommandItem> {
+pub(crate) fn resolve_path<'a>(items: &'a [crate::session::config::CommandItem], path: &[usize]) -> Option<&'a crate::session::config::CommandItem> {
     if path.is_empty() {
         return None;
     }
@@ -1166,18 +1166,18 @@ pub(crate) fn resolve_path<'a>(items: &'a [crate::config::CommandItem], path: &[
     let item = items.get(idx)?;
     if path.len() == 1 {
         Some(item)
-    } else if let crate::config::CommandItem::Folder(f) = item {
+    } else if let crate::session::config::CommandItem::Folder(f) = item {
         resolve_path(&f.children, &path[1..])
     } else {
         None
     }
 }
 
-pub(crate) fn push_item_at(items: &mut Vec<crate::config::CommandItem>, path: &[usize], new_item: crate::config::CommandItem) {
+pub(crate) fn push_item_at(items: &mut Vec<crate::session::config::CommandItem>, path: &[usize], new_item: crate::session::config::CommandItem) {
     if path.is_empty() {
         items.push(new_item);
     } else if let Some(item) = items.get_mut(path[0]) {
-        if let crate::config::CommandItem::Folder(f) = item {
+        if let crate::session::config::CommandItem::Folder(f) = item {
             push_item_at(&mut f.children, &path[1..], new_item);
         }
     }

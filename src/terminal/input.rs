@@ -9,7 +9,7 @@ use gpui::{
 
 use crate::{
     Ashell,
-    config::CommandItem,
+    session::config::CommandItem,
     terminal::{BackendCommand, encode_key},
     TerminalBacktabKey, TerminalTabKey,
 };

@@ -602,7 +602,7 @@ impl Ashell {
         let view = cx.entity();
         let gap_px = px(6.);
         let tile_h = px(34.);
-        let root_folders: Vec<&crate::config::CommandItem> = self.command_tree.iter()
+        let root_folders: Vec<&crate::session::config::CommandItem> = self.command_tree.iter()
             .filter(|i| i.is_folder())
             .collect();
         let selected_path = self.command_current_path.clone();

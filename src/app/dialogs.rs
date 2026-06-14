@@ -1509,7 +1509,7 @@ impl Ashell {
             .and_then(|path| {
                 let item = resolve_path(&self.command_tree, path)?;
                 let cmd = match item {
-                    crate::config::CommandItem::Command(c) => c.command_string.clone(),
+                    crate::session::config::CommandItem::Command(c) => c.command_string.clone(),
                     _ => return None,
                 };
                 Some((item.name().to_string(), cmd))
@@ -1629,16 +1629,16 @@ impl Ashell {
                                                                 let c = cmd_input.read(cx).text().to_string();
                                                                 if !n.is_empty() && !c.is_empty() {
                                                                     let _ = view.update(cx, |this, cx| {
-                                                                        let cmd = crate::config::CommandEntry {
+                                                                        let cmd = crate::session::config::CommandEntry {
                                                                             id: uuid::Uuid::new_v4().to_string(),
                                                                             name: n,
                                                                             command_string: c,
                                                                             append_cr: this.editor_append_cr,
                                                                         };
                                                                         if let Some(ref path) = edit_path {
-                                                                            set_tree_item(&mut this.command_tree, path, crate::config::CommandItem::Command(cmd));
+                                                                            set_tree_item(&mut this.command_tree, path, crate::session::config::CommandItem::Command(cmd));
                                                                         } else {
-                                                                            push_item_at(&mut this.command_tree, &parent_path, crate::config::CommandItem::Command(cmd));
+                                                                            push_item_at(&mut this.command_tree, &parent_path, crate::session::config::CommandItem::Command(cmd));
                                                                         }
                                                                         this.command_flat_items = flatten_command_tree(&this.command_tree);
                                                                         this.command_flat_selection = this.command_flat_items.len().saturating_sub(1);
