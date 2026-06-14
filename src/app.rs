@@ -209,6 +209,7 @@ pub(crate) struct Ashell {
     pub(crate) command_tree: Vec<crate::config::CommandItem>,
     pub(crate) command_flat_selection: usize,
     pub(crate) command_flat_items: Vec<FlatCommandItem>,
+    pub(crate) command_current_path: Vec<usize>,
     pub(crate) custom_command_input: Entity<InputState>,
     pub(crate) command_dialog_name_input: Entity<InputState>,
     pub(crate) command_dialog_cmd_input: Entity<InputState>,
@@ -415,6 +416,7 @@ impl Ashell {
             command_dialog_cmd_input,
             commands_focus_handle: cx.focus_handle(),
             commands_scroll_handle: gpui::ScrollHandle::new(),
+            command_current_path: Vec::new(),
             selected_monitoring_tab: MonitoringTab::RemoteFiles,
             command_context_menu: None,
             show_new_folder_dialog: false,
@@ -852,15 +854,6 @@ impl Ashell {
         cx.notify();
     }
 
-    pub(crate) fn toggle_command_folder(&mut self, flat_index: usize) {
-        let Some(item) = self.command_flat_items.get(flat_index) else { return };
-        if !item.is_folder { return; }
-        toggle_tree_item(&mut self.command_tree, &item.path);
-        self.command_flat_items = flatten_command_tree(&self.command_tree);
-        self.config.set_custom_commands(self.command_tree.clone());
-        let _ = self.config.save();
-    }
-
     pub(crate) fn add_command_folder(&mut self, name: &str) {
         let folder = crate::config::CommandFolder {
             id: uuid::Uuid::new_v4().to_string(),
@@ -868,7 +861,7 @@ impl Ashell {
             children: Vec::new(),
             is_expanded: true,
         };
-        self.command_tree.push(crate::config::CommandItem::Folder(folder));
+        push_item_at(&mut self.command_tree, &self.command_current_path, crate::config::CommandItem::Folder(folder));
         self.command_flat_items = flatten_command_tree(&self.command_tree);
         self.command_flat_selection = self.command_flat_items.len().saturating_sub(1);
         self.config.set_custom_commands(self.command_tree.clone());
@@ -882,44 +875,53 @@ impl Ashell {
             command_string: cmd.to_string(),
             append_cr,
         };
-        self.command_tree.push(crate::config::CommandItem::Command(entry));
+        push_item_at(&mut self.command_tree, &self.command_current_path, crate::config::CommandItem::Command(entry));
         self.command_flat_items = flatten_command_tree(&self.command_tree);
         self.command_flat_selection = self.command_flat_items.len().saturating_sub(1);
         self.config.set_custom_commands(self.command_tree.clone());
         let _ = self.config.save();
     }
 
-    pub(crate) fn remove_command_item(&mut self, flat_index: usize) {
-        let Some(item) = self.command_flat_items.get(flat_index) else { return };
-        remove_tree_item(&mut self.command_tree, &item.path);
+    pub(crate) fn navigate_into_folder(&mut self, path: &[usize]) {
+        self.command_current_path = path.to_vec();
+    }
+
+    pub(crate) fn navigate_up(&mut self) {
+        self.command_current_path.pop();
+    }
+
+    pub(crate) fn current_children(&self) -> Vec<&crate::config::CommandItem> {
+        let items = resolve_path(&self.command_tree, &self.command_current_path);
+        items.map(|i| match i {
+            crate::config::CommandItem::Folder(f) => f.children.iter().collect(),
+            crate::config::CommandItem::Command(_) => vec![],
+        }).unwrap_or_default()
+    }
+
+    pub(crate) fn get_item_at_path(&self, path: &[usize]) -> Option<&crate::config::CommandItem> {
+        resolve_path(&self.command_tree, path)
+    }
+
+    pub(crate) fn delete_item_recursive(&mut self, path: &[usize]) {
+        remove_tree_item(&mut self.command_tree, path);
         self.command_flat_items = flatten_command_tree(&self.command_tree);
         self.command_flat_selection = self.command_flat_selection.min(
             self.command_flat_items.len().saturating_sub(1)
         );
+        // If current path no longer exists, go up
+        if resolve_path(&self.command_tree, &self.command_current_path).is_none() {
+            self.command_current_path.pop();
+        }
         self.config.set_custom_commands(self.command_tree.clone());
         let _ = self.config.save();
     }
 
-    pub(crate) fn get_command_at_flat(&self, flat_index: usize) -> Option<(String, bool)> {
-        let item = self.command_flat_items.get(flat_index)?;
-        if item.is_folder { return None; }
-        item.cmd.clone().map(|c| (c, item.append_cr))
-    }
-}
-
-fn toggle_tree_item(items: &mut [crate::config::CommandItem], path: &[usize]) {
-    if path.is_empty() { return; }
-    let idx = path[0];
-    if idx >= items.len() { return; }
-    match &mut items[idx] {
-        crate::config::CommandItem::Folder(f) => {
-            if path.len() == 1 {
-                f.is_expanded = !f.is_expanded;
-            } else {
-                toggle_tree_item(&mut f.children, &path[1..]);
-            }
+    pub(crate) fn get_command_at_path(&self, path: &[usize]) -> Option<(String, bool)> {
+        let item = resolve_path(&self.command_tree, path)?;
+        match item {
+            crate::config::CommandItem::Command(c) => Some((c.command_string.clone(), c.append_cr)),
+            _ => None,
         }
-        crate::config::CommandItem::Command(_) => {}
     }
 }
 
@@ -942,5 +944,30 @@ pub(crate) fn set_tree_item(items: &mut [crate::config::CommandItem], path: &[us
         items[idx] = new_item;
     } else if let crate::config::CommandItem::Folder(f) = &mut items[idx] {
         set_tree_item(&mut f.children, &path[1..], new_item);
+    }
+}
+
+pub(crate) fn resolve_path<'a>(items: &'a [crate::config::CommandItem], path: &[usize]) -> Option<&'a crate::config::CommandItem> {
+    if path.is_empty() {
+        return None;
+    }
+    let idx = path[0];
+    let item = items.get(idx)?;
+    if path.len() == 1 {
+        Some(item)
+    } else if let crate::config::CommandItem::Folder(f) = item {
+        resolve_path(&f.children, &path[1..])
+    } else {
+        None
+    }
+}
+
+pub(crate) fn push_item_at(items: &mut Vec<crate::config::CommandItem>, path: &[usize], new_item: crate::config::CommandItem) {
+    if path.is_empty() {
+        items.push(new_item);
+    } else if let Some(item) = items.get_mut(path[0]) {
+        if let crate::config::CommandItem::Folder(f) = item {
+            push_item_at(&mut f.children, &path[1..], new_item);
+        }
     }
 }

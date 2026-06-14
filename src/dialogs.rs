@@ -19,8 +19,8 @@ use rust_i18n::t;
 
 use crate::{
     Ashell,
-    app::{flatten_command_tree, set_tree_item},
-    config::{AuthMethod, CommandEntry, CommandItem},
+    app::{flatten_command_tree, push_item_at, resolve_path, set_tree_item},
+    config::AuthMethod,
     system::format_bytes,
 };
 
@@ -1336,17 +1336,21 @@ impl Ashell {
 
     pub(crate) fn show_custom_command_dialog(
         &mut self,
-        edit_flat_index: Option<usize>,
+        edit_path: Option<Vec<usize>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let name_input = self.command_dialog_name_input.clone();
         let cmd_input = self.command_dialog_cmd_input.clone();
-        let (name, command) = edit_flat_index
-            .and_then(|i| {
-                let item = self.command_flat_items.get(i)?;
-                let cmd = item.cmd.as_deref()?;
-                Some((item.name.clone(), cmd.to_string()))
+        let (name, command) = edit_path
+            .as_ref()
+            .and_then(|path| {
+                let item = resolve_path(&self.command_tree, path)?;
+                let cmd = match item {
+                    crate::config::CommandItem::Command(c) => c.command_string.clone(),
+                    _ => return None,
+                };
+                Some((item.name().to_string(), cmd))
             })
             .unwrap_or_default();
         name_input.update(cx, |input, cx| {
@@ -1356,17 +1360,14 @@ impl Ashell {
             input.set_value(&command, window, cx);
         });
 
-        let is_new = edit_flat_index.is_none();
+        let is_new = edit_path.is_none();
         let title = if is_new {
             t!("new_command")
         } else {
             t!("edit_command")
         };
-        let edit_path: Option<Vec<usize>> = edit_flat_index
-            .and_then(|i| self.command_flat_items.get(i))
-            .map(|item| item.path.clone());
-        let edit_path_clone = edit_path.clone();
         let view = cx.entity();
+        let parent_path = if is_new { self.command_current_path.clone() } else { Vec::new() };
 
         window.open_dialog(cx, move |dialog: Dialog, _window, cx| {
             dialog
@@ -1377,12 +1378,12 @@ impl Ashell {
                     let view = view.clone();
                     let name_input = name_input.clone();
                     let cmd_input = cmd_input.clone();
-                    let edit_path = edit_path_clone.clone();
+                    let edit_path = edit_path.clone();
+                    let parent_path = parent_path.clone();
                     move |content, window, cx| {
                         let view = view.clone();
                         let name_input = name_input.clone();
                         let cmd_input = cmd_input.clone();
-                        let edit_path = edit_path.clone();
                         content.child(
                             v_flex()
                                 .gap_3()
@@ -1435,6 +1436,7 @@ impl Ashell {
                                                     let name_input = name_input.clone();
                                                     let cmd_input = cmd_input.clone();
                                                     let edit_path = edit_path.clone();
+                                                    let parent_path = parent_path.clone();
                                                     move |_, window, cx| {
                                                         let n = name_input.read(cx).text().to_string();
                                                         let c = cmd_input.read(cx).text().to_string();
@@ -1446,10 +1448,10 @@ impl Ashell {
                                                                     command_string: c,
                                                                     append_cr: true,
                                                                 };
-                                                                if let Some(path) = &edit_path {
+                                                                if let Some(ref path) = edit_path {
                                                                     set_tree_item(&mut this.command_tree, path, crate::config::CommandItem::Command(cmd));
                                                                 } else {
-                                                                    this.command_tree.push(crate::config::CommandItem::Command(cmd));
+                                                                    push_item_at(&mut this.command_tree, &parent_path, crate::config::CommandItem::Command(cmd));
                                                                 }
                                                                 this.command_flat_items = flatten_command_tree(&this.command_tree);
                                                                 this.command_flat_selection = this.command_flat_items.len().saturating_sub(1);

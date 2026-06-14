@@ -1,7 +1,7 @@
 
 use gpui::{
-    Context, ElementId, Focusable as _, FontWeight, Hsla, InteractiveElement as _,
-    IntoElement, MouseButton, MouseDownEvent,
+    Context, DefiniteLength, ElementId, Focusable as _, FontWeight, Hsla, InteractiveElement as _,
+    IntoElement, MouseButton, MouseDownEvent, TextAlign,
     ParentElement as _, PathBuilder, Pixels, Render,
     StatefulInteractiveElement as _, Styled as _, Window,
     canvas, div, point, prelude::FluentBuilder as _, px, rems, uniform_list,
@@ -22,6 +22,7 @@ use gpui_component::{
 use rust_i18n::t;
 
 use crate::{
+    app::resolve_path,
     Ashell, MonitoringTab, SIDEBAR_WIDTH, TERMINAL_KEY_CONTEXT,
     sftp_ops::is_editable_text_file,
     sftp::format_mtime,
@@ -416,80 +417,103 @@ impl Ashell {
     ) -> impl IntoElement {
         let view = cx.entity();
         let sel = self.command_flat_selection;
+        let children = self.current_children();
         let flat = self.command_flat_items.clone();
-        let items: Vec<gpui::AnyElement> = flat.iter().enumerate().map(|(ix, item)| {
+        let cur_path = self.command_current_path.clone();
+
+        // --- Item tiles (horizontal wrap) ---
+        let tile_size = px(88.);
+        let tile_gap = px(8.);
+        let items: Vec<gpui::AnyElement> = children.iter().enumerate().map(|(ix, item)| {
+            let is_folder = item.is_folder();
+            let item_name = item.name().to_string();
+            let path = {
+                let mut p = self.command_current_path.clone();
+                p.push(ix);
+                p
+            };
             let is_selected = ix == sel;
+
             let bg = if is_selected {
-                cx.theme().secondary
-            } else if ix % 2 == 0 {
-                cx.theme().background
+                cx.theme().primary.opacity(0.25)
             } else {
-                cx.theme().muted.opacity(0.5)
+                cx.theme().muted.opacity(0.12)
             };
-            let indent_px = px(8.) + px(16.) * item.depth as f32;
-            let is_folder = item.is_folder;
-            let is_expanded = item.is_expanded;
-            let item_name = item.name.clone();
-            let item_cmd = item.cmd.clone();
-            let arrow = if is_folder {
-                if is_expanded { "▼ " } else { "▶ " }
-            } else {
-                "  "
-            };
+
             div()
-                .id(("cmd-tree", ix))
-                .w_full()
-                .h(px(32.))
+                .id(("cmd-tile", ix))
+                .w(tile_size)
+                .h(tile_size)
+                .rounded(px(8.))
+                .flex()
+                .flex_col()
                 .items_center()
-                .px_2()
+                .justify_center()
+                .gap_1()
                 .bg(bg)
-                .hover(|style| style.bg(cx.theme().muted))
-                .border_b_1()
-                .border_color(cx.theme().border.opacity(0.35))
+                .hover(|style| style.bg(cx.theme().primary.opacity(0.2)))
+                .cursor_pointer()
                 .on_mouse_down(
                     MouseButton::Left,
-                    window.listener_for(&view, move |this, _, window, cx| {
-                        this.command_flat_selection = ix;
-                        if is_folder {
-                            this.toggle_command_folder(ix);
-                        } else if let Some((cmd_str, _)) = this.get_command_at_flat(ix) {
-                            this.execute_command_string(&cmd_str, window, cx);
-                        }
-                        cx.notify();
-                    }),
+                    {
+                        let p = path.clone();
+                        window.listener_for(&view, move |this, _, window, cx| {
+                            this.command_flat_selection = ix;
+                            if is_folder {
+                                this.navigate_into_folder(&p);
+                            } else if let Some((cmd_str, _)) = this.get_command_at_path(&p) {
+                                this.execute_command_string(&cmd_str, window, cx);
+                            }
+                            cx.notify();
+                        })
+                    },
                 )
                 .context_menu({
                     let view = cx.entity();
+                    let p_delete = path.clone();
+                    let is_fld = is_folder;
                     move |menu, _window, _cx| {
-                        if is_folder {
+                        if is_fld {
                             menu.item(
-                                PopupMenuItem::new(t!("new_command")).on_click(
-                                    _window.listener_for(&view, move |this, _, window, cx| {
-                                        this.show_custom_command_dialog(None, window, cx);
+                                PopupMenuItem::new(t!("edit")).on_click(
+                                    _window.listener_for(&view, {
+                                        let p = p_delete.clone();
+                                        move |this, _, window, cx| {
+                                            this.show_custom_command_dialog(Some(p.clone()), window, cx);
+                                        }
                                     }),
                                 ),
                             )
                             .item(
                                 PopupMenuItem::new(t!("delete")).on_click(
-                                    _window.listener_for(&view, move |this, _, _, cx| {
-                                        this.remove_command_item(ix);
-                                        cx.notify();
+                                    _window.listener_for(&view, {
+                                        let p = p_delete.clone();
+                                        move |this, _, _, cx| {
+                                            this.delete_item_recursive(&p);
+                                            cx.notify();
+                                        }
                                     }),
                                 ),
                             )
                         } else {
                             menu.item(
                                 PopupMenuItem::new(t!("edit")).on_click(
-                                    _window.listener_for(&view, move |this, _, window, cx| {
-                                        this.show_custom_command_dialog(Some(ix), window, cx);
+                                    _window.listener_for(&view, {
+                                        let p = p_delete.clone();
+                                        move |this, _, window, cx| {
+                                            this.show_custom_command_dialog(Some(p.clone()), window, cx);
+                                        }
                                     }),
                                 ),
                             )
                             .item(
                                 PopupMenuItem::new(t!("delete")).on_click(
-                                    _window.listener_for(&view, move |this, _, _, cx| {
-                                        this.remove_command_item(ix);
-                                        cx.notify();
+                                    _window.listener_for(&view, {
+                                        let p = p_delete.clone();
+                                        move |this, _, _, cx| {
+                                            this.delete_item_recursive(&p);
+                                            cx.notify();
+                                        }
                                     }),
                                 ),
                             )
@@ -498,51 +522,25 @@ impl Ashell {
                 })
                 .child(
                     div()
-                        .w(indent_px)
-                        .flex_none(),
-                )
-                .child(
-                    div()
-                        .flex_none()
-                        .w(px(16.))
                         .text_size(rems(0.75))
                         .text_color(cx.theme().muted_foreground)
-                        .child(arrow),
+                        .child(if is_folder { "📁" } else { "⚡" }),
                 )
                 .child(
                     div()
-                        .flex_1()
-                        .min_w(px(0.))
-                        .overflow_hidden()
-                        .text_size(rems(0.917))
+                        .text_size(rems(0.833))
                         .font_weight(if is_folder { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
-                        .text_color(if is_selected {
-                            cx.theme().primary
-                        } else {
-                            cx.theme().foreground
-                        })
-                        .child(if is_folder {
-                            item_name
-                        } else {
-                            let c = item_cmd.as_deref().unwrap_or("");
-                            format!("{}  —  {}", item_name, c)
-                        }),
+                        .text_color(cx.theme().foreground)
+                        .text_align(TextAlign::Center)
+                        .line_height(DefiniteLength::Fraction(1.2))
+                        .overflow_hidden()
+                        .px_1()
+                        .child(item_name),
                 )
-                .when_some(item_cmd.clone(), |this, cmd_str| {
-                    this.child(
-                        Button::new(("cmd-run", ix))
-                            .ghost()
-                            .xsmall()
-                            .icon(IconName::ArrowRight)
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.execute_command_string(&cmd_str, window, cx);
-                            })),
-                    )
-                })
                 .into_any_element()
         }).collect();
 
-        let command_list = if items.is_empty() {
+        let content_area = if items.is_empty() {
             v_flex()
                 .flex_1()
                 .items_center()
@@ -555,13 +553,19 @@ impl Ashell {
                 )
                 .into_any_element()
         } else {
-            v_flex()
+            div()
                 .flex_1()
                 .min_h(px(0.))
                 .id("commands-scroll")
                 .track_scroll(&self.commands_scroll_handle)
                 .overflow_y_scrollbar()
-                .gap_0()
+                .flex()
+                .flex_wrap()
+                .content_start()
+                .items_start()
+                .gap(tile_gap)
+                .px(tile_gap)
+                .py(tile_gap)
                 .w_full()
                 .children(items)
                 .into_any_element()
@@ -620,8 +624,73 @@ impl Ashell {
                     )
                 }
             })
-            .child(command_list)
+            .child(self.render_breadcrumb(&cur_path, window, cx))
+            .child(content_area)
             .child(bottom)
+    }
+
+    fn render_breadcrumb(
+        &self,
+        cur_path: &[usize],
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        if cur_path.is_empty() {
+            return div().into_any_element();
+        }
+        let view = cx.entity();
+        let tree = &self.command_tree;
+        let mut segments: Vec<gpui::AnyElement> = Vec::new();
+
+        segments.push(
+            div()
+                .id("breadcrumb-root")
+                .cursor_pointer()
+                .text_size(rems(0.833))
+                .text_color(cx.theme().primary)
+                .hover(|style| style.underline())
+                .child(t!("custom_commands"))
+                .on_mouse_down(MouseButton::Left, window.listener_for(&view, move |this, _, _, cx| {
+                    this.command_current_path.clear();
+                    cx.notify();
+                }))
+                .into_any_element()
+        );
+
+        let mut acc_path = Vec::new();
+        for (i, &idx) in cur_path.iter().enumerate() {
+            acc_path.push(idx);
+            let item = resolve_path(tree, &acc_path);
+            let name = item.map(|i| i.name().to_string()).unwrap_or_default();
+            let acc = acc_path.clone();
+            segments.push(div().child(" / ").into_any_element());
+            segments.push(
+                div()
+                    .id(("breadcrumb-seg", i))
+                    .cursor_pointer()
+                    .text_size(rems(0.833))
+                    .text_color(cx.theme().primary)
+                    .hover(|style| style.underline())
+                    .child(name)
+                    .on_mouse_down(MouseButton::Left, window.listener_for(&view, move |this, _, _, cx| {
+                        this.command_current_path = acc.clone();
+                        cx.notify();
+                    }))
+                    .into_any_element()
+            );
+        }
+
+        h_flex()
+            .flex_none()
+            .h(px(30.))
+            .px_2()
+            .items_center()
+            .gap_0()
+            .border_b_1()
+            .border_color(cx.theme().border.opacity(0.35))
+            .bg(cx.theme().tab_bar)
+            .children(segments)
+            .into_any_element()
     }
 
     fn render_monitoring_panel(
