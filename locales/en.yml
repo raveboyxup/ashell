@@ -115,6 +115,7 @@ edit_file_tooltip: "Download to temporary directory, open in default editor, and
 auto_saved_and_uploaded: "Auto-saved & uploaded: %{base}"
 scroll: "Scroll ↓"
 clone: "Clone"
+copy_file_path: "Copy File Path"
 custom_commands: "Commands"
 no_custom_commands: "No commands yet. Create a folder or command to get started."
 new_command: "New Command"

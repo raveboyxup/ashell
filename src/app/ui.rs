@@ -1,6 +1,6 @@
 
 use gpui::{
-    Context, ElementId, Focusable as _, FontWeight, Hsla, InteractiveElement as _,
+    ClipboardItem, Context, ElementId, Focusable as _, FontWeight, Hsla, InteractiveElement as _,
     IntoElement, MouseButton, MouseDownEvent,
     ParentElement as _, PathBuilder, Pixels, Render,
     StatefulInteractiveElement as _, Styled as _, Window,
@@ -2214,14 +2214,28 @@ impl Render for Ashell {
                                     v_flex()
                                         .w_full()
                                         .child(
-                                            Button::new("sftp-context-download")
+                                                Button::new("sftp-context-download")
+                                                    .ghost()
+                                                    .w_full()
+                                                    .justify_start()
+                                                    .label(label)
+                                                    .on_click(cx.listener(|this, _, window, cx| {
+                                                        this.trigger_sftp_context_download(window, cx);
+                                                    })),
+                                        )
+                                        .child(
+                                            Button::new("sftp-context-copy-path")
                                                 .ghost()
                                                 .w_full()
                                                 .justify_start()
-                                                .label(label)
-                                                .on_click(cx.listener(|this, _, window, cx| {
-                                                    this.trigger_sftp_context_download(window, cx);
-                                                })),
+                                                .label(t!("copy_file_path"))
+                                                .on_click({
+                                                    let path = menu.remote_path.clone();
+                                                    cx.listener(move |this, _, _, cx| {
+                                                        cx.write_to_clipboard(ClipboardItem::new_string(path.clone()));
+                                                        this.dismiss_sftp_context_menu(cx);
+                                                    })
+                                                }),
                                         )
                                         .when(
                                             !menu.is_dir
