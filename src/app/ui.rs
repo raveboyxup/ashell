@@ -85,14 +85,6 @@ impl Ashell {
             .border_b_1()
             .border_color(cx.theme().border)
             .bg(cx.theme().tab_bar)
-            .child(
-                div()
-                    .text_size(rems(1.0))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(cx.theme().primary)
-                    .child(t!("remote_files")),
-            )
-            .child(div().flex_1())
             .when_some(active_sftp.clone(), |this, sftp| {
                 let selected_entries = sftp.selected_entries.clone();
                 this.child(
@@ -1366,6 +1358,145 @@ impl Ashell {
             .child(zone_c)
     }
 
+    fn render_sidebar_monitoring_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let cpu_pct = self.system.cpu_percent;
+        let mem_pct = self.system.mem_percent;
+        let swap_pct = self.system.swap_percent;
+
+        let cpu_color = cx.theme().chart_1;
+        let mem_color = cx.theme().chart_2;
+        let swap_color = cx.theme().chart_3;
+        let disk_color = cx.theme().chart_5;
+        let net_color = cx.theme().chart_4;
+        let muted_fg = cx.theme().muted_foreground;
+
+        v_flex()
+            .gap_4()
+            .w_full()
+            .p_2()
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .child(div().text_size(rems(0.85)).text_color(cpu_color).child(t!("cpu").to_string()))
+                            .child(div().text_size(rems(0.85)).text_color(muted_fg).child(format!("{:.1}%", cpu_pct * 100.0))),
+                    )
+                    .child(Progress::new("sidebar-cpu").value(cpu_pct * 100.0).color(cpu_color).with_size(px(4.)).w_full()),
+            )
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .child(div().text_size(rems(0.85)).text_color(mem_color).child(t!("mem").to_string()))
+                            .child(div().text_size(rems(0.85)).text_color(muted_fg).child(self.system.mem_detail.clone())),
+                    )
+                    .child(Progress::new("sidebar-mem").value(mem_pct * 100.0).color(mem_color).with_size(px(4.)).w_full()),
+            )
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .child(div().text_size(rems(0.85)).text_color(swap_color).child(t!("swap").to_string()))
+                            .child(div().text_size(rems(0.85)).text_color(muted_fg).child(self.system.swap_detail.clone())),
+                    )
+                    .child(Progress::new("sidebar-swap").value(swap_pct * 100.0).color(swap_color).with_size(px(4.)).w_full()),
+            )
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .items_center()
+                            .child(div().text_size(rems(0.85)).text_color(disk_color).child(t!("disk").to_string()))
+                            .children(if self.system.disks.len() > 3 {
+                                Some(div().text_size(rems(0.65)).text_color(muted_fg).child(t!("scroll").to_string()))
+                            } else {
+                                None
+                            }),
+                    )
+                    .child(
+                        div()
+                            .relative()
+                            .w_full()
+                            .child(
+                                v_flex()
+                                    .id("sidebar-disk-scroll")
+                                    .track_scroll(&self.disk_scroll_handle)
+                                    .overflow_y_scroll()
+                                    .max_h(px(90.))
+                                    .gap_2()
+                                    .children(self.system.disks.iter().map(|disk| {
+                                        let pct = if disk.total_bytes > 0 {
+                                            (disk.total_bytes - disk.available_bytes) as f64 / disk.total_bytes as f64 * 100.0
+                                        } else {
+                                            0.0
+                                        };
+                                        let mount_short = disk.mount.clone();
+                                        let mount_id = format!("sidebar-disk-{}", mount_short);
+                                        v_flex()
+                                            .gap_0p5()
+                                            .child(
+                                                h_flex()
+                                                    .justify_between()
+                                                    .child(div().text_size(rems(0.75)).text_color(muted_fg).child(mount_short))
+                                                    .child(div().text_size(rems(0.75)).text_color(muted_fg).child(format!("{:.1}%", pct))),
+                                            )
+                                            .child(Progress::new(mount_id).value(pct as f32).color(disk_color).with_size(px(4.)).w_full())
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .absolute()
+                                    .top_0()
+                                    .right_0()
+                                    .bottom_0()
+                                    .w(px(8.))
+                                    .child(
+                                        Scrollbar::vertical(&self.disk_scroll_handle)
+                                            .scrollbar_show(ScrollbarShow::Scrolling),
+                                    ),
+                            ),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .child(div().text_size(rems(0.85)).text_color(net_color).child(t!("net").to_string()))
+                            .child(div().text_size(rems(0.85)).text_color(muted_fg).child(t!("live"))),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                h_flex()
+                                    .flex_1()
+                                    .min_w(px(0.))
+                                    .gap_1()
+                                    .child(div().flex_none().text_size(rems(0.75)).text_color(net_color).child("↓"))
+                                    .child(div().text_size(rems(0.75)).child(self.system.net_rx.clone())),
+                            )
+                            .child(
+                                h_flex()
+                                    .flex_1()
+                                    .min_w(px(0.))
+                                    .gap_1()
+                                    .child(div().flex_none().text_size(rems(0.75)).text_color(cx.theme().chart_5).child("↑"))
+                                    .child(div().text_size(rems(0.75)).child(self.system.net_tx.clone())),
+                            ),
+                    ),
+            )
+    }
+
     fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let sessions = self.config.sessions().to_vec();
         let active_session_id = self.active_session_id().map(ToOwned::to_owned);
@@ -1406,28 +1537,31 @@ impl Ashell {
                             )
                             
                     )
-                    .child(
-                        div()
-                            .text_size(rems(0.917))
-                            .text_color(cx.theme().muted_foreground)
-                            .child({
-                                if let Some(kind) = self.active_kind() {
-                                    match kind {
-                                        TabKind::Local => t!("local_terminal").to_string(),
-                                        TabKind::Ssh => {
-                                            if let Some((_, session)) = self.active_ssh_session() {
-                                                format!("ssh / {}", session.name)
-                                            } else {
-                                                "ssh".to_string()
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    self.active_title()
-                                }
-                            }),
-                    ),
             )
+            .child(
+                div()
+                    .text_size(rems(0.917))
+                    .text_color(cx.theme().muted_foreground)
+                    .child({
+                        if let Some(kind) = self.active_kind() {
+                            match kind {
+                                TabKind::Local => t!("local_terminal").to_string(),
+                                TabKind::Ssh => {
+                                    if let Some((_, session)) = self.active_ssh_session() {
+                                        format!("ssh / {}", session.name)
+                                    } else {
+                                        "ssh".to_string()
+                                    }
+                                }
+                            }
+                        } else {
+                            self.active_title()
+                        }
+                    }),
+            )
+            .when(self.config.monitoring_position() == "Sidebar", |this| {
+                this.child(self.render_sidebar_monitoring_panel(cx))
+            })
             .child(
                 Button::new("open-ssh-panel")
                     .primary()
