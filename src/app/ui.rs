@@ -22,12 +22,12 @@ use gpui_component::{
 use rust_i18n::t;
 
 use crate::{
-    Ashell, MonitoringTab, SIDEBAR_WIDTH, TERMINAL_KEY_CONTEXT,
-    sftp_ops::is_editable_text_file,
+    Ashell, MonitoringTab, PaneLayout,
+    app::constants::{SIDEBAR_WIDTH, TERMINAL_KEY_CONTEXT},
+    sftp::ops::is_editable_text_file,
     sftp::format_mtime,
     system::format_bytes,
-    terminal::{self, TabKind},
-    terminal_element,
+    terminal::{self, TabKind, TerminalTab},
 };
 
 impl Ashell {
@@ -77,19 +77,191 @@ impl Ashell {
     ) -> impl IntoElement {
         let active_sftp = self.active_sftp();
 
-        let Some(sftp) = active_sftp else {
-            return v_flex()
-                .flex_1()
-                .items_center()
-                .justify_center()
-                .p_3()
-                .child(
-                    div()
-                        .text_size(rems(1.0))
-                        .text_color(cx.theme().muted_foreground)
-                        .child(t!("open_ssh_tab_sftp")),
+        let header = h_flex()
+            .flex_none()
+            .h(px(34.))
+            .items_center()
+                    .gap_2()
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().tab_bar)
+            .child(
+                div()
+                    .text_size(rems(1.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(cx.theme().primary)
+                    .child(t!("remote_files")),
+            )
+            .child(div().flex_1())
+            .when_some(active_sftp.clone(), |this, sftp| {
+                let selected_entries = sftp.selected_entries.clone();
+                this.child(
+                    Button::new("sftp-refresh")
+                        .ghost()
+                        .small()
+                        .icon(IconName::ArrowRight)
+                        .label(t!("refresh").to_string())
+                        .on_click(cx.listener(|this, _, _, cx| this.refresh_sftp(cx))),
                 )
-                .into_any_element();
+                .child(
+                    Button::new("sftp-new-folder")
+                        .ghost()
+                        .small()
+                        .icon(IconName::Folder)
+                        .label(t!("new_folder").to_string())
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.sftp_creating_folder = true;
+                            this.sftp_new_folder_input.update(cx, |input, cx| {
+                                input.set_value("", window, cx);
+                                input.focus_handle(cx).focus(window, cx);
+                            });
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    Button::new("sftp-delete-selected")
+                        .ghost()
+                        .small()
+                        .icon(IconName::Close)
+                        .label(if selected_entries.is_empty() {
+                            t!("delete_selected").to_string()
+                        } else {
+                            format!(
+                                "{} ({})",
+                                t!("delete_selected").to_string(),
+                                selected_entries.len()
+                            )
+                        })
+                        .disabled(selected_entries.is_empty())
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.show_delete_confirm_dialog(window, cx);
+                        })),
+                )
+                .child(
+                    Button::new("sftp-upload-file")
+                        .ghost()
+                        .small()
+                        .icon(IconName::Plus)
+                        .label(t!("upload_file").to_string())
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.upload_sftp_files(window, cx)),
+                        ),
+                )
+                .child(
+                    Button::new("sftp-upload-folder")
+                        .ghost()
+                        .small()
+                        .icon(IconName::Folder)
+                        .label(t!("upload_folder").to_string())
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.upload_sftp_folder(window, cx)),
+                        ),
+                )
+                .child(
+                    Button::new("sftp-download-selected")
+                        .ghost()
+                        .small()
+                        .icon(IconName::ArrowDown)
+                        .label(if selected_entries.is_empty() {
+                            t!("download").to_string()
+                        } else {
+                            t!("download_count", count = selected_entries.len()).to_string()
+                        })
+                        .disabled(selected_entries.is_empty())
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.download_selected_sftp_entries(window, cx);
+                        })),
+                )
+                .child(
+                    Checkbox::new("sftp-show-hidden")
+                        .small()
+                        .label(t!("hidden").to_string())
+                        .checked(self.show_hidden_files)
+                        .tab_stop(false)
+                        .on_click(cx.listener(|this, checked, _, cx| {
+                            this.show_hidden_files = *checked;
+                            this.config.set_show_hidden_files(*checked);
+                            let _ = this.config.save();
+                            cx.notify();
+                        })),
+                )
+            })
+            .child(
+                Button::new("open-transfers")
+                    .ghost()
+                    .small()
+                    .icon(IconName::ArrowDown)
+                    .label(t!("transfers").to_string())
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.show_transfers_dialog(window, cx);
+                    })),
+            )
+            .child(
+                Button::new("sftp-minimize-toggle")
+                    .ghost()
+                    .small()
+                    .icon(if self.sftp_panel_minimized { IconName::ChevronUp } else { IconName::ChevronDown })
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        let state = this.body_panels.clone();
+                        let minimized = this.sftp_panel_minimized;
+                        
+                        if !minimized {
+                            let sizes = state.read(cx).sizes();
+                            if sizes.len() > 1 {
+                                this.prev_monitoring_size = Some(sizes[1]);
+                            }
+                            this.sftp_panel_minimized = true;
+                        } else {
+                            this.sftp_panel_minimized = false;
+                            let prev_size = this.prev_monitoring_size.unwrap_or(px(328.));
+                            
+                            cx.on_next_frame(window, move |_this: &mut crate::app::Ashell, window: &mut gpui::Window, cx: &mut gpui::Context<crate::app::Ashell>| {
+                                cx.on_next_frame(window, move |this: &mut crate::app::Ashell, window: &mut gpui::Window, cx: &mut gpui::Context<crate::app::Ashell>| {
+                                    this.body_panels.update(cx, |state, cx| {
+                                        let sizes = state.sizes();
+                                        let c_size_f32: f32 = sizes.iter().map(|s| s.as_f32()).sum();
+                                        let c_size = px(c_size_f32);
+                                        let target_p0 = c_size - prev_size;
+                                        state.resize_panel(0, target_p0, window, cx);
+                                    });
+                                    cx.notify();
+                                });
+                            });
+                        }
+                        cx.notify();
+                    })),
+            );
+
+        let Some(sftp) = active_sftp else {
+            let mut panel = v_flex()
+                .gap_0()
+                .border_color(cx.theme().border)
+                .bg(cx.theme().background);
+            
+            if !self.sftp_panel_minimized {
+                panel = panel.size_full();
+            } else {
+                panel = panel.flex_none();
+            }
+            
+            panel = panel.child(header);
+            
+            if !self.sftp_panel_minimized {
+                panel = panel.child(
+                    v_flex()
+                        .flex_1()
+                        .items_center()
+                        .justify_center()
+                        .p_3()
+                        .child(
+                            div()
+                                .text_size(rems(1.0))
+                                .text_color(cx.theme().muted_foreground)
+                                .child(t!("open_ssh_tab_sftp")),
+                        ),
+                );
+            }
+            return panel.into_any_element();
         };
 
         let selected_path = sftp.selected_path.clone();
@@ -111,10 +283,18 @@ impl Ashell {
         let size_col_width = px(96.);
         let modified_col_width = px(152.);
 
-        v_flex()
-            .flex_1()
-            .min_h(px(0.))
+        let mut panel = v_flex()
             .gap_0()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().background);
+
+        if !self.sftp_panel_minimized {
+            panel = panel.size_full();
+        } else {
+            panel = panel.flex_none();
+        }
+
+        panel = panel
             .on_drop(
                 cx.listener(|this, paths: &gpui::ExternalPaths, _window, cx| {
                     let paths_to_upload: Vec<String> = paths
@@ -125,7 +305,10 @@ impl Ashell {
                     this.upload_sftp_files_batch(paths_to_upload, cx);
                 }),
             )
-            .child(
+            .child(header);
+
+        if !self.sftp_panel_minimized {
+            panel = panel            .child(
                 h_flex()
                     .h(px(36.))
                     .items_center()
@@ -405,8 +588,10 @@ impl Ashell {
                             .text_color(cx.theme().muted_foreground)
                             .child(status),
                     ),
-            )
-            .into_any_element()
+            );
+        }
+
+        panel.into_any_element()
     }
 
     fn render_custom_commands_content(
@@ -825,7 +1010,7 @@ impl Ashell {
                             .text_size(rems(0.833))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(cpu_color)
-                            .child("CPU"),
+                            .child(t!("cpu").to_string()),
                     )
                     .child(div().flex_1())
                     .child(
@@ -889,7 +1074,7 @@ impl Ashell {
                             .text_size(rems(0.833))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(mem_color)
-                            .child("MEM"),
+                            .child(t!("mem").to_string()),
                     )
                     .child(div().flex_1())
                     .child(
@@ -918,25 +1103,27 @@ impl Ashell {
                             .child(mem_detail),
                     ),
             )
-            .child(
-                h_flex()
-                    .w_full()
-                    .items_center()
-                    .gap_1()
-                    .child(
-                        Progress::new("swap-progress")
-                            .value(swap_pct * 100.0)
-                            .color(swap_color)
-                            .with_size(px(4.))
-                            .flex_1(),
-                    )
-                    .child(
-                        div()
-                            .text_size(rems(0.7))
-                            .text_color(muted_fg)
-                            .child(swap_detail),
-                    ),
-            );
+            .when(self.system.total_swap > 0, |this| {
+                this.child(
+                    h_flex()
+                        .w_full()
+                        .items_center()
+                        .gap_1()
+                        .child(
+                            Progress::new("swap-progress")
+                                .value(swap_pct * 100.0)
+                                .color(swap_color)
+                                .with_size(px(4.))
+                                .flex_1(),
+                        )
+                        .child(
+                            div()
+                                .text_size(rems(0.7))
+                                .text_color(muted_fg)
+                                .child(swap_detail),
+                        ),
+                )
+            });
 
         // --- NET card: rx/tx text + dual sparkline ---
         let net_card = if show_net_card {
@@ -1077,7 +1264,7 @@ impl Ashell {
                                     .text_size(rems(0.833))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(disk_color)
-                                    .child("DISK"),
+                                    .child(t!("disk").to_string()),
                             )
                             .child(
                                 Button::new("disk-refresh")
@@ -1096,40 +1283,66 @@ impl Ashell {
                                     .child(format!("{:.0}%", disk_pct)),
                             ),
                     )
-                    .children(disks.iter().map(|disk| {
-                        let pct = if disk.total_bytes > 0 {
-                            (disk.total_bytes - disk.available_bytes) as f64
-                                / disk.total_bytes as f64
-                                * 100.0
-                        } else {
-                            0.0
-                        };
-                        let mount_short = disk.mount.clone();
-                        let mount_id = format!("disk-{}", mount_short);
-                        h_flex()
-                            .w_full()
-                            .items_center()
-                            .gap_1()
+                    .child(
+                        div()
+                            .relative()
+                            .flex_1()
+                            .min_h(px(0.))
+                            .child(
+                                v_flex()
+                                    .id("disk-scroll")
+                                    .track_scroll(&self.disk_scroll_handle)
+                                    .overflow_y_scroll()
+                                    .size_full()
+                                    .children(disks.iter().map(|disk| {
+                                        let pct = if disk.total_bytes > 0 {
+                                            (disk.total_bytes - disk.available_bytes) as f64
+                                                / disk.total_bytes as f64
+                                                * 100.0
+                                        } else {
+                                            0.0
+                                        };
+                                        let mount_short = disk.mount.clone();
+                                        let mount_id = format!("disk-{}", mount_short);
+                                        h_flex()
+                                            .w_full()
+                                            .items_center()
+                                            .gap_1()
+                                            .child(
+                                                div()
+                                                    .text_size(rems(0.667))
+                                                    .text_color(muted_fg)
+                                                    .child(mount_short),
+                                            )
+                                            .child(
+                                                Progress::new(mount_id)
+                                                    .value(pct as f32)
+                                                    .color(disk_color)
+                                                    .with_size(px(4.))
+                                                    .flex_1(),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(rems(0.667))
+                                                    .text_color(muted_fg)
+                                                    .child(format!("{:.0}%", pct)),
+                                            )
+                                    }))
+                            )
                             .child(
                                 div()
-                                    .text_size(rems(0.667))
-                                    .text_color(muted_fg)
-                                    .child(mount_short),
+                                    .absolute()
+                                    .top_0()
+                                    .right_0()
+                                    .bottom_0()
+                                    .w(px(8.))
+                                    .child(
+                                        Scrollbar::vertical(&self.disk_scroll_handle)
+                                            .scrollbar_show(ScrollbarShow::Scrolling)
+                                    )
                             )
-                            .child(
-                                Progress::new(mount_id)
-                                    .value(pct as f32)
-                                    .color(disk_color)
-                                    .with_size(px(4.))
-                                    .flex_1(),
-                            )
-                            .child(
-                                div()
-                                    .text_size(rems(0.667))
-                                    .text_color(muted_fg)
-                                    .child(format!("{:.0}%", pct)),
-                            )
-                    }))
+                            .into_any_element()
+                    )
                     .into_any_element(),
             )
         } else {
@@ -1155,6 +1368,145 @@ impl Ashell {
             panel = panel.child(card);
         }
         panel
+    }
+
+    fn render_sidebar_monitoring_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let cpu_pct = self.system.cpu_percent;
+        let mem_pct = self.system.mem_percent;
+        let swap_pct = self.system.swap_percent;
+
+        let cpu_color = cx.theme().chart_1;
+        let mem_color = cx.theme().chart_2;
+        let swap_color = cx.theme().chart_3;
+        let disk_color = cx.theme().chart_5;
+        let net_color = cx.theme().chart_4;
+        let muted_fg = cx.theme().muted_foreground;
+
+        v_flex()
+            .gap_4()
+            .w_full()
+            .p_2()
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .child(div().text_size(rems(0.85)).text_color(cpu_color).child(t!("cpu").to_string()))
+                            .child(div().text_size(rems(0.85)).text_color(muted_fg).child(format!("{:.1}%", cpu_pct * 100.0))),
+                    )
+                    .child(Progress::new("sidebar-cpu").value(cpu_pct * 100.0).color(cpu_color).with_size(px(4.)).w_full())
+            )
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .child(div().text_size(rems(0.85)).text_color(mem_color).child(t!("mem").to_string()))
+                            .child(div().text_size(rems(0.85)).text_color(muted_fg).child(self.system.mem_detail.clone())),
+                    )
+                    .child(Progress::new("sidebar-mem").value(mem_pct * 100.0).color(mem_color).with_size(px(4.)).w_full())
+            )
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .child(div().text_size(rems(0.85)).text_color(swap_color).child(t!("swap").to_string()))
+                            .child(div().text_size(rems(0.85)).text_color(muted_fg).child(self.system.swap_detail.clone())),
+                    )
+                    .child(Progress::new("sidebar-swap").value(swap_pct * 100.0).color(swap_color).with_size(px(4.)).w_full())
+            )
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .items_center()
+                            .child(div().text_size(rems(0.85)).text_color(disk_color).child(t!("disk").to_string()))
+                            .children(if self.system.disks.len() > 3 {
+                                Some(div().text_size(rems(0.65)).text_color(muted_fg).child(t!("scroll").to_string()))
+                            } else {
+                                None
+                            })
+                    )
+                    .child(
+                        div()
+                            .relative()
+                            .w_full()
+                            .child(
+                                v_flex()
+                                    .id("sidebar-disk-scroll")
+                                    .track_scroll(&self.disk_scroll_handle)
+                                    .overflow_y_scroll()
+                                    .max_h(px(90.))
+                                    .gap_2()
+                                    .children(self.system.disks.iter().map(|disk| {
+                                        let pct = if disk.total_bytes > 0 {
+                                            (disk.total_bytes - disk.available_bytes) as f64 / disk.total_bytes as f64 * 100.0
+                                        } else {
+                                            0.0
+                                        };
+                                        let mount_short = disk.mount.clone();
+                                        let mount_id = format!("sidebar-disk-{}", mount_short);
+                                        v_flex()
+                                            .gap_0p5()
+                                            .child(
+                                                h_flex()
+                                                    .justify_between()
+                                                    .child(div().text_size(rems(0.75)).text_color(muted_fg).child(mount_short))
+                                                    .child(div().text_size(rems(0.75)).text_color(muted_fg).child(format!("{:.1}%", pct))),
+                                            )
+                                            .child(Progress::new(mount_id).value(pct as f32).color(disk_color).with_size(px(4.)).w_full())
+                                    }))
+                            )
+                            .child(
+                                div()
+                                    .absolute()
+                                    .top_0()
+                                    .right_0()
+                                    .bottom_0()
+                                    .w(px(8.))
+                                    .child(
+                                        Scrollbar::vertical(&self.disk_scroll_handle)
+                                            .scrollbar_show(ScrollbarShow::Scrolling)
+                                    )
+                            )
+                    )
+            )
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .child(div().text_size(rems(0.85)).text_color(net_color).child(t!("net").to_string()))
+                            .child(div().text_size(rems(0.85)).text_color(muted_fg).child(t!("live"))),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                h_flex()
+                                    .flex_1()
+                                    .min_w(px(0.))
+                                    .gap_1()
+                                    .child(div().flex_none().text_size(rems(0.75)).text_color(net_color).child("↓"))
+                                    .child(div().text_size(rems(0.75)).child(self.system.net_rx.clone()))
+                            )
+                            .child(
+                                h_flex()
+                                    .flex_1()
+                                    .min_w(px(0.))
+                                    .gap_1()
+                                    .child(div().flex_none().text_size(rems(0.75)).text_color(cx.theme().chart_5).child("↑"))
+                                    .child(div().text_size(rems(0.75)).child(self.system.net_tx.clone()))
+                            )
+                    )
+            )
     }
 
     fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1220,6 +1572,9 @@ impl Ashell {
                             }),
                     ),
             )
+            .when(self.config.monitoring_position() == "Sidebar", |this| {
+                this.child(self.render_sidebar_monitoring_panel(cx))
+            })
             .child(
                 v_flex()
                     .gap_2()
@@ -1372,9 +1727,24 @@ impl Ashell {
                                                     let view = cx.entity();
                                                     move |menu, window, _| {
                                                         let edit_value = edit_id.clone();
+                                                        let clone_value = edit_id.clone();
                                                         let delete_value = delete_id.clone();
                                                         menu.item(
-                                                            PopupMenuItem::new("Edit").on_click(
+                                                            PopupMenuItem::new(t!("clone").to_string()).on_click(
+                                                                window.listener_for(
+                                                                    &view,
+                                                                    move |this, _, window, cx| {
+                                                                        this.clone_saved_session(
+                                                                            clone_value.clone(),
+                                                                            window,
+                                                                            cx,
+                                                                        )
+                                                                    },
+                                                                ),
+                                                            ),
+                                                        )
+                                                        .item(
+                                                            PopupMenuItem::new(t!("edit").to_string()).on_click(
                                                                 window.listener_for(
                                                                     &view,
                                                                     move |this, _, window, cx| {
@@ -1388,7 +1758,7 @@ impl Ashell {
                                                             ),
                                                         )
                                                         .item(
-                                                            PopupMenuItem::new("Delete").on_click(
+                                                            PopupMenuItem::new(t!("delete").to_string()).on_click(
                                                                 window.listener_for(
                                                                     &view,
                                                                     move |this, _, _, cx| {
@@ -1632,6 +2002,20 @@ impl Ashell {
             .active_tab
             .as_ref()
             .and_then(|active_id| self.tabs.iter().position(|tab| &tab.id == active_id));
+        let active_group_index = self
+            .active_group
+            .as_ref()
+            .and_then(|gid| self.tab_groups.iter().position(|g| g.id == *gid));
+        let selected = active_group_index.unwrap_or(active_tab_index.unwrap_or(0));
+        let groups_data: Vec<(String, String, Vec<String>)> = self
+            .tab_groups
+            .iter()
+            .map(|g| {
+                let pane_ids: Vec<String> =
+                    g.pane_root.tab_ids().iter().map(|s| s.to_string()).collect();
+                (g.id.clone(), g.title.clone(), pane_ids)
+            })
+            .collect();
         v_flex()
             .h(px(32.))
             .w_full()
@@ -1649,54 +2033,86 @@ impl Ashell {
                             .min_w(px(0.))
                             .h_full()
                             .overflow_x_hidden()
-                            .child(
+                            .child({
                                 TabBar::new("ashell-tab-bar")
                                     .track_scroll(&self.tabs_scroll_handle)
-                                    .selected_index(active_tab_index.unwrap_or(0))
-                                    .children(self.tabs.iter().enumerate().map(|(ix, tab)| {
-                                        let id = tab.id.clone();
-                                        let close_id = tab.id.clone();
-                                        let dot_color = if tab.connected {
-                                            cx.theme().success
-                                        } else {
-                                            cx.theme().danger
-                                        };
-                                        Tab::new()
-                                            .prefix(
-                                                div()
-                                                    .w(px(5.))
-                                                    .h(px(32.))
-                                                    .bg(dot_color),
-                                            )
-                                            .label(tab.title.clone())
-                                            .on_click(cx.listener(move |this, _, window, cx| {
-                                                this.activate_tab(id.clone(), window, cx)
-                                            }))
-                                            .suffix(
-                                                Button::new(("tab-close", ix))
-                                                    .ghost()
-                                                    .xsmall()
-                                                    .icon(IconName::Close)
-                                                    .on_mouse_down(
-                                                        MouseButton::Left,
-                                                        |_, window, cx| {
-                                                            window.prevent_default();
-                                                            cx.stop_propagation();
-                                                        },
-                                                    )
-                                                    .on_click(cx.listener(
-                                                        move |this, _, window, cx| {
-                                                            window.prevent_default();
-                                                            cx.stop_propagation();
-                                                            this.close_tab(close_id.clone(), cx)
-                                                        },
-                                                    )),
-                                            )
-                                    }))
+                                    .selected_index(selected)
+                                    .children(groups_data.iter().enumerate().map(
+                                        |(ix, (group_id, title, pane_ids))| {
+                                            let gid = group_id.clone();
+                                            let label = if pane_ids.len() > 1 {
+                                                format!("{} ({})", title, pane_ids.len())
+                                            } else {
+                                                title.clone()
+                                            };
+                                            let close_id = if self.active_group.as_ref() == Some(&gid) {
+                                                self.active_tab.clone().unwrap_or_else(|| pane_ids.first().cloned().unwrap_or_default())
+                                            } else {
+                                                pane_ids.first().cloned().unwrap_or_default()
+                                            };
+                                            let dot_color = pane_ids
+                                                .first()
+                                                .and_then(|id| {
+                                                    self.tabs.iter().find(|t| t.id == *id)
+                                                })
+                                                .map(|tab| {
+                                                    if tab.connected {
+                                                        cx.theme().success
+                                                    } else {
+                                                        cx.theme().danger
+                                                    }
+                                                })
+                                                .unwrap_or(cx.theme().success);
+                                            Tab::new()
+                                                .min_w(px(80.))
+                                                .prefix(
+                                                    div()
+                                                        .w(px(5.))
+                                                        .h(px(32.))
+                                                        .bg(dot_color),
+                                                )
+                                                .label(label)
+                                                .on_click(cx.listener(
+                                                    move |this, _, window, cx| {
+                                                        this.activate_group(
+                                                            gid.clone(),
+                                                            window,
+                                                            cx,
+                                                        )
+                                                    },
+                                                ))
+                                                .suffix(
+                                                    Button::new(("tab-close", ix))
+                                                        .ghost()
+                                                        .xsmall()
+                                                        .icon(IconName::Close)
+                                                        .mr(px(5.))
+                                                        .on_mouse_down(
+                                                            MouseButton::Left,
+                                                            |_, window, cx| {
+                                                                window.prevent_default();
+                                                                cx.stop_propagation();
+                                                            },
+                                                        )
+                                                        .on_click(cx.listener(
+                                                            move |this, _, window, cx| {
+                                                                window.prevent_default();
+                                                                cx.stop_propagation();
+                                                                if !close_id.is_empty() {
+                                                                    this.close_tab(
+                                                                        close_id.clone(),
+                                                                        cx,
+                                                                    )
+                                                                }
+                                                            },
+                                                        )),
+                                                )
+                                        },
+                                    ))
                                     .last_empty_space(div().w_3())
                                     .w_full()
-                                    .h_full(),
-                            ),
+                                    .h_full()
+                            }),
                     )
                     .child(
                         h_flex()
@@ -1714,31 +2130,41 @@ impl Ashell {
                                         this.show_selector_dialog(window, cx)
                                     })),
                             )
-                            .child(
-                                Button::new("split-horizontal")
-                                    .secondary()
-                                    .small()
-                                    .rounded(px(999.))
-                                    .icon(IconName::PanelBottom)
-                                    .on_click(cx.listener(|_, _, _, _| {}))
-                            )
-                            .child(
-                                Button::new("split-vertical")
-                                    .secondary()
-                                    .small()
-                                    .rounded(px(999.))
-                                    .icon(IconName::PanelRight)
-                                    .on_click(cx.listener(|_, _, _, _| {}))
-                            ),
+                             .child(
+                                  Button::new("split-horizontal")
+                                      .secondary()
+                                      .small()
+                                      .rounded(px(999.))
+                                      .icon(IconName::PanelBottom)
+                                      .on_click(cx.listener(|this, _, window, cx| {
+                                          window.prevent_default();
+                                          cx.stop_propagation();
+                                          this.split_current_pane("down", cx);
+                                      }))
+                              )
+                              .child(
+                                  Button::new("split-vertical")
+                                      .secondary()
+                                      .small()
+                                      .rounded(px(999.))
+                                      .icon(IconName::PanelRight)
+                                      .on_click(cx.listener(|this, _, window, cx| {
+                                          window.prevent_default();
+                                          cx.stop_propagation();
+                                          this.split_current_pane("right", cx);
+                                      }))
+                              ),
                     ),
             )
     }
 
     fn render_terminal_panel(
         &mut self,
-        terminal_snapshot: Option<terminal::RenderSnapshot>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let has_active = self.active_tab.is_some();
+        let pane_tree = self.pane_root.clone();
+
         v_flex().size_full().child(
             div()
                 .size_full()
@@ -1756,35 +2182,196 @@ impl Ashell {
                 .on_action(cx.listener(Self::on_terminal_tab_action))
                 .on_action(cx.listener(Self::on_terminal_backtab_action))
                 .on_scroll_wheel(cx.listener(Self::on_terminal_scroll))
-                .child(match terminal_snapshot.clone() {
-                    None => self.render_home_page(cx).into_any_element(),
-                    Some(snapshot) => {
-                        let view = cx.entity();
-                        div()
-                            .size_full()
-                            .on_prepaint({
-                                let view = view.clone();
-                                move |bounds, _window, cx| {
-                                    let _ = view.update(cx, |this, _| {
-                                        this.terminal_bounds = Some(bounds);
-                                    });
-                                }
-                            })
-                            .child(terminal_element::TerminalElement::new(
-                                cx.entity(),
-                                self.focus_handle.clone(),
-                                snapshot,
-                                self.terminal_marked_text.clone(),
-                                self.terminal_font_family.clone(),
-                                px(self.terminal_font_size),
-                                px(self.terminal_line_height()),
-                                px(self.terminal_cell_width()),
-                            ))
-                            .vertical_scrollbar(&self.terminal_scrollbar)
-                            .into_any_element()
-                    }
+                .child(if has_active {
+                    Self::render_pane_tree(self, &pane_tree, &[], cx).into_any_element()
+                } else {
+                    self.render_home_page(cx).into_any_element()
                 }),
         )
+    }
+
+    fn render_pane_tree(
+        this: &mut Ashell,
+        layout: &PaneLayout,
+        path: &[usize],
+        cx: &mut Context<Ashell>,
+    ) -> impl IntoElement {
+        match layout {
+            PaneLayout::Single(tab_id) => {
+                if tab_id.is_empty() {
+                    return this.render_home_page(cx).into_any_element();
+                }
+                let is_focused = path == this.focused_pane_path.as_slice();
+                let snapshot = this
+                    .tabs
+                    .iter()
+                    .find(|t| &t.id == tab_id)
+                    .map(TerminalTab::render_snapshot);
+                let Some(snapshot) = snapshot else {
+                    return div().into_any_element();
+                };
+                let view = cx.entity();
+                let tab_id_clone = tab_id.clone();
+                let tab_id_clone2 = tab_id.clone();
+                let focus_handle = this.focus_handle.clone();
+                let marked_text = if is_focused {
+                    this.terminal_marked_text.clone()
+                } else {
+                    None
+                };
+                let font_family = this.terminal_font_family.clone();
+                let font_size = px(this.terminal_font_size);
+                let line_height = px(this.terminal_line_height());
+                let cell_width = px(this.terminal_cell_width());
+                let mut el = div()
+                    .size_full()
+                    .overflow_hidden()
+                    .on_prepaint(move |bounds, _window, cx| {
+                        let _ = view.update(cx, |this, _| {
+                            this.terminal_bounds.insert(tab_id_clone.clone(), bounds);
+                        });
+                    })
+                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                        this.focus_pane_with_id(tab_id_clone2.clone());
+                        cx.notify();
+                    }))
+                    .child(terminal::element::TerminalElement::new(
+                        cx.entity(),
+                        focus_handle,
+                        snapshot,
+                        marked_text,
+                        font_family,
+                        font_size,
+                        line_height,
+                        cell_width,
+                    ));
+                let scrollbar = this.terminal_scrollbars.entry(tab_id.clone()).or_default();
+                el = el.vertical_scrollbar(scrollbar);
+                let indicator_color = this
+                    .tabs
+                    .iter()
+                    .find(|t| t.id == *tab_id)
+                    .map(|tab| {
+                        if tab.connected {
+                            cx.theme().success
+                        } else {
+                            cx.theme().danger
+                        }
+                    })
+                    .unwrap_or(cx.theme().success);
+                let has_multiple_panes = this.pane_root.tab_ids().len() > 1;
+
+                if !is_focused {
+                    el = el.opacity(0.85);
+                }
+
+                if has_multiple_panes {
+                    if is_focused {
+                        el = div()
+                            .size_full()
+                            .relative()
+                            .child(div().absolute().top(px(1.)).left(px(1.)).right(px(1.)).h(px(1.)).bg(indicator_color))
+                            .child(div().absolute().bottom(px(1.)).left(px(1.)).right(px(1.)).h(px(1.)).bg(indicator_color))
+                            .child(div().absolute().left(px(1.)).top(px(1.)).bottom(px(1.)).w(px(1.)).bg(indicator_color))
+                            .child(div().absolute().right(px(1.)).top(px(1.)).bottom(px(1.)).w(px(1.)).bg(indicator_color))
+                            .p(px(4.))
+                            .child(el);
+                    } else {
+                        el = div()
+                            .size_full()
+                            .p(px(4.))
+                            .child(el);
+                    }
+                }
+
+                el.into_any_element()
+            }
+            PaneLayout::Horizontal(children, ratio) => {
+                v_flex()
+                    .size_full()
+                    .children(children.iter().enumerate().flat_map(|(i, child)| {
+                        let mut items: Vec<gpui::AnyElement> = Vec::new();
+                        if i > 0 {
+                            let mut splitter_path = path.to_vec();
+                            splitter_path.push(i - 1); // path to the pane BEFORE this splitter
+                            items.push(
+                                div()
+                                    .h(px(4.))
+                                    .w_full()
+                                    .flex_none()
+                                    .cursor_row_resize()
+                                    .bg(cx.theme().border)
+                                    .hover(|s| s.bg(cx.theme().accent))
+                                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, event, window, cx| {
+                                        window.prevent_default();
+                                        cx.stop_propagation();
+                                        this.start_drag_split(splitter_path.clone(), i, event, window, cx);
+                                    }))
+                                    .into_any_element()
+                            );
+                        }
+                        let mut child_path = path.to_vec();
+                        child_path.push(i);
+                        items.push(
+                            div()
+                                .flex_grow(if children.len() == 2 {
+                                    if i == 0 { *ratio } else { 1.0 - *ratio }
+                                } else {
+                                    1.0
+                                })
+                                .min_h(px(0.))
+                                .overflow_hidden()
+                                .child(Self::render_pane_tree(this, child, &child_path, cx))
+                                .into_any_element()
+                        );
+                        items
+                    }))
+                    .into_any_element()
+            }
+            PaneLayout::Vertical(children, ratio) => {
+                h_flex()
+                    .items_stretch()
+                    .size_full()
+                    .children(children.iter().enumerate().flat_map(|(i, child)| {
+                        let mut items: Vec<gpui::AnyElement> = Vec::new();
+                        if i > 0 {
+                            let mut splitter_path = path.to_vec();
+                            splitter_path.push(i - 1);
+                            items.push(
+                                div()
+                                    .w(px(4.))
+                                    .h_full()
+                                    .flex_none()
+                                    .cursor_col_resize()
+                                    .bg(cx.theme().border)
+                                    .hover(|s| s.bg(cx.theme().accent))
+                                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, event, window, cx| {
+                                        window.prevent_default();
+                                        cx.stop_propagation();
+                                        this.start_drag_split(splitter_path.clone(), i, event, window, cx);
+                                    }))
+                                    .into_any_element()
+                            );
+                        }
+                        let mut child_path = path.to_vec();
+                        child_path.push(i);
+                        items.push(
+                            div()
+                                .flex_grow(if children.len() == 2 {
+                                    if i == 0 { *ratio } else { 1.0 - *ratio }
+                                } else {
+                                    1.0
+                                })
+                                .min_w(px(0.))
+                                .overflow_hidden()
+                                .child(Self::render_pane_tree(this, child, &child_path, cx))
+                                .into_any_element()
+                        );
+                        items
+                    }))
+                    .into_any_element()
+            }
+        }
     }
 }
 
@@ -1796,11 +2383,6 @@ impl Render for Ashell {
             .is_some_and(|active_id| !self.tabs.iter().any(|tab| &tab.id == active_id))
         {
             self.active_tab = self.tabs.first().map(|tab| tab.id.clone());
-            self.cpu_history.clear();
-            self.net_rx_history.clear();
-            self.net_tx_history.clear();
-            self.remote_sample_in_flight = false;
-            self.request_active_system_snapshot();
         }
         self.sync_sftp_path_input(window, cx);
         self.sync_terminal_size(window, cx);
@@ -1808,26 +2390,29 @@ impl Render for Ashell {
             self.show_transfers_dialog = false;
             self.show_transfers_dialog(window, cx);
         }
-        if let Some(new_display_offset) = self.terminal_scrollbar.future_display_offset.take() {
-            if let Some(active_id) = self.active_tab.clone() {
-                if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == active_id) {
-                    let current = tab.render_snapshot().display_offset;
-                    match new_display_offset.cmp(&current) {
-                        std::cmp::Ordering::Greater => {
-                            tab.scroll_up_by(new_display_offset - current)
+        if let Some(active_id) = self.active_tab.clone() {
+            if let Some(scrollbar) = self.terminal_scrollbars.get(&active_id) {
+                if let Some(new_display_offset) = scrollbar.future_display_offset.take() {
+                    if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == active_id) {
+                        let current = tab.render_snapshot().display_offset;
+                        match new_display_offset.cmp(&current) {
+                            std::cmp::Ordering::Greater => {
+                                tab.scroll_up_by(new_display_offset - current)
+                            }
+                            std::cmp::Ordering::Less => {
+                                tab.scroll_down_by(current - new_display_offset)
+                            }
+                            std::cmp::Ordering::Equal => {}
                         }
-                        std::cmp::Ordering::Less => {
-                            tab.scroll_down_by(current - new_display_offset)
-                        }
-                        std::cmp::Ordering::Equal => {}
                     }
                 }
             }
-        }
-        let terminal_snapshot = self.active_snapshot();
-        if let Some(snapshot) = terminal_snapshot.as_ref() {
-            self.terminal_scrollbar
-                .update(snapshot, px(self.terminal_line_height()));
+            if let Some(snapshot) = self.active_snapshot().as_ref() {
+                if let Some(scrollbar) = self.terminal_scrollbars.get(&active_id) {
+                    scrollbar
+                        .update(snapshot, px(self.terminal_line_height()));
+                }
+            }
         }
 
         let sidebar_area = resizable_panel()
@@ -2015,24 +2600,63 @@ impl Render for Ashell {
                 )
             });
 
-        let monitoring_panel = resizable_panel()
-            .size(px(328.))
-            .size_range(px(200.)..px(1200.))
-            .child(
-                v_flex()
-                    .size_full()
-                    .child(shared_header)
-                    .child(if is_remote {
-                        self.render_sftp_content(window, cx).into_any_element()
-                    } else {
-                        self.render_custom_commands_content(window, cx).into_any_element()
-                    }),
-            );
+        let monitoring_panel = v_flex()
+            .size_full()
+            .child(shared_header)
+            .child(if is_remote {
+                self.render_sftp_content(window, cx).into_any_element()
+            } else {
+                self.render_custom_commands_content(window, cx).into_any_element()
+            });
 
-        let body_panel = v_resizable("ashell-body")
-            .with_state(&self.body_panels)
-            .child(resizable_panel().child(self.render_terminal_panel(terminal_snapshot, cx)))
+        let monitoring_contents = v_flex()
+            .size_full()
+            .when(self.config.monitoring_position() == "Bottom", |this| {
+                this.child(self.render_monitoring_panel(window.viewport_size().width, cx))
+            })
             .child(monitoring_panel);
+
+        let is_monitor_bottom = self.config.monitoring_position() == "Bottom";
+        let minimized_height = if is_monitor_bottom { 114. } else { 34. };
+        let min_panel_height = if is_monitor_bottom { 260. } else { 180. };
+        let default_panel_height = if is_monitor_bottom { 328. } else { 248. };
+
+        let body_panel = if self.sftp_panel_minimized {
+            v_flex()
+                .size_full()
+                .child(
+                    div().flex_1().min_h(px(0.)).child(
+                        v_resizable("ashell-body")
+                            .with_state(&self.body_panels)
+                            .child(resizable_panel().child(self.render_terminal_panel(cx)))
+                    )
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .h(px(minimized_height))
+                        .w_full()
+                        .border_t_1()
+                        .border_color(cx.theme().border)
+                        .child(monitoring_contents)
+                )
+                .into_any_element()
+        } else {
+            v_resizable("ashell-body")
+                .with_state(&self.body_panels)
+                .child(resizable_panel().child(self.render_terminal_panel(cx)))
+                .child(
+                    resizable_panel()
+                        .size(px(self
+                            .config
+                            .body_panels()
+                            .and_then(|s| s.get(1).copied())
+                            .unwrap_or(default_panel_height)))
+                        .size_range(px(min_panel_height)..px(1200.))
+                        .child(monitoring_contents)
+                )
+                .into_any_element()
+        };
 
         let main_area = resizable_panel().child(
             v_flex()
@@ -2172,20 +2796,46 @@ impl Render for Ashell {
                                                 .loading(!progress.failed)
                                                 .label(progress.title.clone()),
                                         )
-                                        .child(div().max_h(px(220.)).overflow_y_scrollbar().child(
-                                            v_flex().gap_2().children(
-                                                progress.lines.iter().cloned().map(|line| {
+                                        .child(
+                                            div()
+                                                .relative()
+                                                .min_h(px(0.))
+                                                .max_h(px(220.))
+                                                .child(
                                                     div()
-                                                        .text_size(rems(1.0))
-                                                        .text_color(if progress.failed {
-                                                            cx.theme().danger
-                                                        } else {
-                                                            cx.theme().muted_foreground
-                                                        })
-                                                        .child(line)
-                                                }),
-                                            ),
-                                        ))
+                                                        .id("connection-progress-scroll")
+                                                        .max_h(px(220.))
+                                                        .overflow_hidden()
+                                                        .overflow_y_scroll()
+                                                        .track_scroll(&self.connection_scroll_handle)
+                                                        .child(
+                                                            v_flex().gap_2().children(
+                                                                progress.lines.iter().cloned().map(|line| {
+                                                                    div()
+                                                                        .text_size(rems(1.0))
+                                                                        .text_color(if progress.failed {
+                                                                            cx.theme().danger
+                                                                        } else {
+                                                                            cx.theme().muted_foreground
+                                                                        })
+                                                                        .child(line)
+                                                                }),
+                                                            ),
+                                                        )
+                                                )
+                                                .child(
+                                                    div()
+                                                        .absolute()
+                                                        .top_0()
+                                                        .right_0()
+                                                        .bottom_0()
+                                                        .w(px(16.))
+                                                        .child(
+                                                            Scrollbar::vertical(&self.connection_scroll_handle)
+                                                                .scrollbar_show(ScrollbarShow::Scrolling)
+                                                        )
+                                                )
+                                        )
                                         .when(progress.failed, |this| {
                                             this.child(
                                                 h_flex()

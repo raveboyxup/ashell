@@ -171,6 +171,12 @@ pub struct ConfigFile {
     pub show_hidden_files: bool,
     #[serde(default)]
     pub custom_commands: Vec<CommandItem>,
+    #[serde(default = "default_monitoring_position")]
+    pub monitoring_position: String,
+}
+
+fn default_monitoring_position() -> String {
+    "Sidebar".to_string()
 }
 
 fn default_locale() -> String {
@@ -206,6 +212,16 @@ impl ConfigStore {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create config dir {}", parent.display()))?;
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Ok(mut perms) = fs::metadata(parent).map(|m| m.permissions()) {
+                    perms.set_mode(0o700);
+                    let _ = fs::set_permissions(parent, perms);
+                }
+            }
+
             let tmp_dir = parent.join("tmp");
             let _ = fs::remove_dir_all(&tmp_dir);
             let _ = fs::create_dir_all(&tmp_dir);
@@ -274,6 +290,14 @@ impl ConfigStore {
         self.cache.locale = locale.to_string();
     }
 
+    pub fn monitoring_position(&self) -> &str {
+        &self.cache.monitoring_position
+    }
+
+    pub fn set_monitoring_position(&mut self, pos: &str) {
+        self.cache.monitoring_position = pos.to_string();
+    }
+
     pub fn terminal_font_size(&self) -> f32 {
         if self.cache.terminal_font_size <= 0.0 {
             default_terminal_font_size()
@@ -303,6 +327,7 @@ impl ConfigStore {
         self.cache.workspace_panels.as_ref()
     }
 
+    #[allow(dead_code)]
     pub fn body_panels(&self) -> Option<&Vec<f32>> {
         self.cache.body_panels.as_ref()
     }
@@ -415,6 +440,17 @@ impl ConfigStore {
         }
         let raw = serde_json::to_string_pretty(&self.cache)?;
         fs::write(&self.path, raw)
-            .with_context(|| format!("failed to write {}", self.path.display()))
+            .with_context(|| format!("failed to write {}", self.path.display()))?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(mut perms) = fs::metadata(&self.path).map(|m| m.permissions()) {
+                perms.set_mode(0o600);
+                let _ = fs::set_permissions(&self.path, perms);
+            }
+        }
+
+        Ok(())
     }
 }

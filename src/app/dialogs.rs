@@ -21,7 +21,7 @@ use rust_i18n::t;
 use crate::{
     Ashell,
     app::{flatten_command_tree, push_item_at, resolve_path, set_tree_item},
-    config::AuthMethod,
+    session::config::AuthMethod,
     system::format_bytes,
 };
 
@@ -103,7 +103,31 @@ impl Ashell {
                                     )
                                 })
                                 .when(!is_password, |this| {
-                                    this.child(Input::new(&key_path_input).tab_index(5)).child(
+                                    this.child(
+                                        h_flex()
+                                            .gap_2()
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .cursor_pointer()
+                                                    .on_mouse_down(
+                                                        MouseButton::Left,
+                                                        window.listener_for(&view, |this, _, window, cx| {
+                                                            this.pick_ssh_key_path(window, cx);
+                                                        }),
+                                                    )
+                                                    .child(Input::new(&key_path_input).tab_index(5)),
+                                            )
+                                            .child(
+                                                Button::new("clear-key-path")
+                                                    .ghost()
+                                                    .icon(IconName::Close)
+                                                    .on_click(window.listener_for(&view, |this, _, window, cx| {
+                                                        Self::set_input_value(&this.key_path_input, "", window, cx);
+                                                    }))
+                                            ),
+                                    )
+                                    .child(
                                         Input::new(&key_inline_input).h(px(128.)).tab_index(6),
                                     )
                                 })
@@ -436,9 +460,8 @@ impl Ashell {
                                     .icon(IconName::Pause)
                                     .on_click(window.listener_for(&view, {
                                         let id = t.info.id.clone();
-                                        let tab_id = t.tab_id.clone();
                                         move |this, _, _, _| {
-                                            if let Some(handle) = this.sftp_handles.get(&tab_id) {
+                                            if let Some(handle) = this.active_sftp_handle() {
                                                 handle.pause_transfer(id.clone());
                                             }
                                         }
@@ -452,9 +475,8 @@ impl Ashell {
                                     .icon(IconName::Close)
                                     .on_click(window.listener_for(&view, {
                                         let id = t.info.id.clone();
-                                        let tab_id = t.tab_id.clone();
                                         move |this, _, _, _| {
-                                            if let Some(handle) = this.sftp_handles.get(&tab_id) {
+                                            if let Some(handle) = this.active_sftp_handle() {
                                                 handle.cancel_transfer(id.clone());
                                             }
                                         }
@@ -472,9 +494,8 @@ impl Ashell {
                                     .icon(IconName::Play)
                                     .on_click(window.listener_for(&view, {
                                         let id = t.info.id.clone();
-                                        let tab_id = t.tab_id.clone();
                                         move |this, _, _, _| {
-                                            if let Some(handle) = this.sftp_handles.get(&tab_id) {
+                                            if let Some(handle) = this.active_sftp_handle() {
                                                 handle.resume_transfer(id.clone());
                                             }
                                         }
@@ -488,9 +509,8 @@ impl Ashell {
                                     .icon(IconName::Close)
                                     .on_click(window.listener_for(&view, {
                                         let id = t.info.id.clone();
-                                        let tab_id = t.tab_id.clone();
                                         move |this, _, _, _| {
-                                            if let Some(handle) = this.sftp_handles.get(&tab_id) {
+                                            if let Some(handle) = this.active_sftp_handle() {
                                                 handle.cancel_transfer(id.clone());
                                             }
                                         }
@@ -700,19 +720,15 @@ impl Ashell {
                         selected_entries.clone().into_iter().collect();
                     move |_, window, cx| {
                         view.update(cx, |this, cx| {
-                            if let Some(id) = this.active_tab.clone() {
-                                if let Some(handle) = this.sftp_handles.get(&id) {
-                                    let _ = handle.commands.send(
-                                        crate::sftp::SftpCommand::DeletePaths(
-                                            paths_to_delete.clone(),
-                                        ),
-                                    );
-                                }
-                                if let Some(tab) = this.tabs.iter_mut().find(|t| t.id == id) {
-                                    if let Some(sftp) = tab.sftp.as_mut() {
-                                        sftp.selected_entries.clear();
-                                    }
-                                }
+                            if let Some(handle) = this.active_sftp_handle() {
+                                let _ = handle.commands.send(
+                                    crate::sftp::SftpCommand::DeletePaths(
+                                        paths_to_delete.clone(),
+                                    ),
+                                );
+                            }
+                            if let Some(sftp) = this.active_sftp_mut() {
+                                sftp.selected_entries.clear();
                             }
                             cx.notify();
                         });
@@ -829,21 +845,15 @@ impl Ashell {
                                     let view = view.clone();
                                     move |_, window, cx| {
                                         view.update(cx, |this, cx| {
-                                            if let Some(id) = this.active_tab.clone() {
-                                                if let Some(handle) = this.sftp_handles.get(&id) {
-                                                    let _ = handle.commands.send(
-                                                        crate::sftp::SftpCommand::DeletePaths(
-                                                            paths_to_delete.clone(),
-                                                        ),
-                                                    );
-                                                }
-                                                if let Some(tab) =
-                                                    this.tabs.iter_mut().find(|t| t.id == id)
-                                                {
-                                                    if let Some(sftp) = tab.sftp.as_mut() {
-                                                        sftp.selected_entries.clear();
-                                                    }
-                                                }
+                                            if let Some(handle) = this.active_sftp_handle() {
+                                                let _ = handle.commands.send(
+                                                    crate::sftp::SftpCommand::DeletePaths(
+                                                        paths_to_delete.clone(),
+                                                    ),
+                                                );
+                                            }
+                                            if let Some(sftp) = this.active_sftp_mut() {
+                                                sftp.selected_entries.clear();
                                             }
                                             cx.notify();
                                         });
@@ -1148,6 +1158,72 @@ impl Ashell {
                                                 .text_size(rems(0.85))
                                                 .text_color(cx.theme().muted_foreground)
                                                 .child(t!("copy_paste_hint", key = if cfg!(target_os = "macos") { "Command" } else { "Ctrl" }).to_string())
+                                        )
+                                )
+                                .child(
+                                    h_flex()
+                                        .items_center()
+                                        .gap_3()
+                                        .child(div().w(px(240.)).child(t!("monitoring_position").to_string()))
+                                        .child(
+                                            Button::new("monitoring-position-dropdown")
+                                                .small()
+                                                .icon(IconName::PanelLeftOpen)
+                                                .label({
+                                                    let pos = view.read(cx).config.monitoring_position().to_string();
+                                                    if pos == "Sidebar" {
+                                                        t!("position_sidebar").to_string()
+                                                    } else if pos == "Hidden" {
+                                                        t!("position_hidden").to_string()
+                                                    } else {
+                                                        t!("position_bottom").to_string()
+                                                    }
+                                                })
+                                                .dropdown_menu_with_anchor(Anchor::BottomRight, {
+                                                    let view = view.clone();
+                                                    move |mut menu, window, cx| {
+                                                        let pos = view.read(cx).config.monitoring_position().to_string();
+                                                        menu = menu
+                                                            .min_w(160.)
+                                                            .item(
+                                                                PopupMenuItem::new(t!("position_bottom").to_string())
+                                                                    .checked(pos == "Bottom")
+                                                                    .on_click(window.listener_for(
+                                                                        &view,
+                                                                        |this, _, _window, cx| {
+                                                                            this.config.set_monitoring_position("Bottom");
+                                                                            let _ = this.config.save();
+                                                                            cx.notify();
+                                                                        },
+                                                                    )),
+                                                            )
+                                                            .item(
+                                                                PopupMenuItem::new(t!("position_sidebar").to_string())
+                                                                    .checked(pos == "Sidebar")
+                                                                    .on_click(window.listener_for(
+                                                                        &view,
+                                                                        |this, _, _window, cx| {
+                                                                            this.config.set_monitoring_position("Sidebar");
+                                                                            let _ = this.config.save();
+                                                                            cx.notify();
+                                                                        },
+                                                                    )),
+                                                            )
+                                                            .item(
+                                                                PopupMenuItem::new(t!("position_hidden").to_string())
+                                                                    .checked(pos == "Hidden")
+                                                                    .on_click(window.listener_for(
+                                                                        &view,
+                                                                        |this, _, _window, cx| {
+                                                                            this.config.set_monitoring_position("Hidden");
+                                                                            let _ = this.config.save();
+                                                                            cx.notify();
+                                                                        },
+                                                                    )),
+                                                            );
+                                                        menu
+                                                    }
+                                                }),
                                         )
                                 )
                                 .child(

@@ -21,6 +21,52 @@ impl Ashell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Pane navigation: Alt + h/j/k/l
+        if event.keystroke.modifiers.alt
+            && !event.keystroke.modifiers.shift
+            && !event.keystroke.modifiers.control
+            && !event.keystroke.modifiers.platform
+        {
+            match event.keystroke.key.to_ascii_lowercase().as_str() {
+                "h" => self.focus_adjacent_pane("left"),
+                "j" => self.focus_adjacent_pane("down"),
+                "k" => self.focus_adjacent_pane("up"),
+                "l" => self.focus_adjacent_pane("right"),
+                "q" => {
+                    if let Some(active_id) = self.active_tab.clone() {
+                        self.close_tab(active_id, cx);
+                    }
+                }
+                _ => return,
+            }
+            window.prevent_default();
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
+
+        // Pane split: Shift+Alt + h/j/k/l
+        if event.keystroke.modifiers.shift
+            && event.keystroke.modifiers.alt
+            && !event.keystroke.modifiers.control
+            && !event.keystroke.modifiers.platform
+        {
+            let direction = match event.keystroke.key.to_ascii_lowercase().as_str() {
+                "h" => Some("left"),
+                "j" => Some("down"),
+                "k" => Some("up"),
+                "l" => Some("right"),
+                _ => None,
+            };
+            if let Some(dir) = direction {
+                self.split_current_pane(dir, cx);
+                window.prevent_default();
+                cx.stop_propagation();
+                cx.notify();
+                return;
+            }
+        }
+
         if event.keystroke.modifiers.secondary() && event.keystroke.key == "," {
             self.show_settings_dialog(window, cx);
             window.prevent_default();
@@ -266,9 +312,20 @@ impl Ashell {
     pub(crate) fn on_terminal_mouse_move(
         &mut self,
         event: &MouseMoveEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Handle split drag
+        if self.dragging_splitter.is_some() {
+            if event.pressed_button == Some(MouseButton::Left) {
+                self.on_split_drag_move(event, window, cx);
+                cx.notify();
+            } else {
+                self.end_drag_split();
+                cx.notify();
+            }
+            return;
+        }
         if !self.terminal_selecting || event.pressed_button != Some(MouseButton::Left) {
             return;
         }
@@ -290,6 +347,9 @@ impl Ashell {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.dragging_splitter.is_some() {
+            self.end_drag_split();
+        }
         self.terminal_selecting = false;
         cx.notify();
     }
@@ -360,8 +420,17 @@ impl Ashell {
         &self,
         position: Point<Pixels>,
     ) -> Option<(usize, usize, Side)> {
-        let bounds = self.terminal_bounds?;
+        let active_id = self.active_tab.as_ref()?;
+        let bounds = self.terminal_bounds.get(active_id)?;
         if !bounds.contains(&position) {
+            // Try other pane bounds
+            for (_, b) in &self.terminal_bounds {
+                if b.contains(&position) {
+                    // Found a different pane - focus it
+                    // (this path is for click-to-focus; handled via focus_terminal)
+                    return None;
+                }
+            }
             return None;
         }
         let local_x = (position.x - bounds.origin.x).max(px(0.));

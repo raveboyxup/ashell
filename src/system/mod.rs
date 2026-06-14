@@ -36,6 +36,7 @@ pub struct SystemSnapshot {
     pub net_names: Vec<String>,
     pub active_nic: String,
     pub disks: Vec<DiskSample>,
+    pub total_swap: u64,
 }
 
 pub struct SystemSampler {
@@ -111,7 +112,6 @@ impl SystemSampler {
             .disks
             .iter()
             .filter(|disk| disk.total_space() > 0 && is_real_filesystem(disk.file_system()))
-            .take(4)
             .map(|disk| DiskSample {
                 mount: disk.mount_point().to_string_lossy().to_string(),
                 available_bytes: disk.available_space(),
@@ -141,6 +141,7 @@ impl SystemSampler {
             net_names: self.nic_names(),
             active_nic: self.selected_nic.clone().unwrap_or_default(),
             disks,
+            total_swap: swap_total,
         }
     }
 
@@ -266,6 +267,7 @@ pub fn remote_snapshot_from_kv(raw: &str) -> Result<SystemSnapshot> {
         net_names: Vec::new(),
         active_nic: String::new(),
         disks,
+        total_swap: swap_total,
     })
 }
 

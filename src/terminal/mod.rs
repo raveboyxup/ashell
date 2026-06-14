@@ -1,3 +1,6 @@
+pub mod element;
+pub mod input;
+
 use std::sync::mpsc::Sender;
 
 use alacritty_terminal::{
@@ -10,7 +13,7 @@ use alacritty_terminal::{
 };
 use gpui::Keystroke;
 
-use crate::config::Session;
+use crate::session::config::Session;
 use crate::sftp::{PreviewData, RemoteEntry};
 use crate::system::SystemSnapshot;
 
@@ -113,7 +116,6 @@ pub struct TerminalTab {
     pub status: String,
     pub connected: bool,
     pub session: Option<Session>,
-    pub sftp: Option<SftpUiState>,
     processor: Processor,
     term: Term<TerminalListener>,
     cols: u16,
@@ -202,15 +204,6 @@ impl TerminalTab {
         );
         tab.session = Some(session.clone());
         tab.connected = false;
-        tab.sftp = Some(SftpUiState {
-            current_path: "/".into(),
-            status: t!("sftp_connecting").to_string(),
-            entries: Vec::new(),
-            selected_path: None,
-            preview: None,
-            selected_entries: std::collections::HashSet::new(),
-            home_dir: "/".into(),
-        });
         tab
     }
 
@@ -229,7 +222,6 @@ impl TerminalTab {
             status,
             connected: matches!(kind, TabKind::Local),
             session: None,
-            sftp: None,
             processor: Processor::new(),
             term: new_term(100, 30, backend.clone(), id, events),
             cols: 100,
@@ -443,7 +435,6 @@ impl EventListener for TerminalListener {
     }
 }
 
-use rust_i18n::t;
 fn new_term(
     cols: u16,
     rows: u16,

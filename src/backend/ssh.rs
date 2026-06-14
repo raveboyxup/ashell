@@ -14,7 +14,7 @@ use russh::{
 use tokio::sync::mpsc;
 
 use crate::{
-    config::{AuthMethod, Session},
+    session::config::{AuthMethod, Session},
     system::{SystemSnapshot, remote_snapshot_from_kv},
     terminal::{BackendCommand, BackendEvent, BackendTx},
 };
@@ -115,16 +115,16 @@ async fn run_ssh(
         tab_id: tab_id.clone(),
     });
 
+    let exit_reason;
+    let mut is_graceful_close = false;
+
     loop {
         tokio::select! {
             command = commands.recv() => {
                 match command {
                     Some(BackendCommand::Input(bytes)) => {
                         if let Err(err) = channel.data(bytes.as_slice()).await {
-                            let _ = events.send(BackendEvent::Closed {
-                                tab_id: tab_id.clone(),
-                                reason: format!("ssh write error: {err}"),
-                            });
+                            exit_reason = format!("ssh write error: {err}");
                             break;
                         }
                     }
@@ -133,6 +133,7 @@ async fn run_ssh(
                     }
                     Some(BackendCommand::Close) | None => {
                         let _ = channel.eof().await;
+                        exit_reason = "ssh session closed".to_string();
                         break;
                     }
                 }
@@ -145,7 +146,25 @@ async fn run_ssh(
                             bytes: data.to_vec(),
                         });
                     }
-                    Some(ChannelMsg::Close) | None => break,
+                    Some(ChannelMsg::ExitStatus { exit_status: _ }) | Some(ChannelMsg::Eof) => {
+                        is_graceful_close = true;
+                    }
+                    Some(ChannelMsg::Close) => {
+                        if is_graceful_close {
+                            exit_reason = "ssh session closed".to_string();
+                        } else {
+                            exit_reason = "ssh connection lost (abrupt close)".to_string();
+                        }
+                        break;
+                    }
+                    None => {
+                        if is_graceful_close {
+                            exit_reason = "ssh session closed".to_string();
+                        } else {
+                            exit_reason = "ssh connection lost (network drop)".to_string();
+                        }
+                        break;
+                    }
                     _ => {}
                 }
             }
@@ -157,7 +176,7 @@ async fn run_ssh(
         .await;
     let _ = events.send(BackendEvent::Closed {
         tab_id,
-        reason: "ssh session closed".into(),
+        reason: exit_reason,
     });
     Ok(())
 }
@@ -169,6 +188,8 @@ async fn connect_and_authenticate(
 ) -> Result<russh::client::Handle<ClientHandler>> {
     let config = Arc::new(client::Config {
         inactivity_timeout: Some(std::time::Duration::from_secs(600)),
+        keepalive_interval: Some(std::time::Duration::from_secs(10)),
+        keepalive_max: 3,
         ..Default::default()
     });
     let addr = format!("{}:{}", session.host, session.port);
