@@ -891,6 +891,9 @@ impl Ashell {
     }
 
     pub(crate) fn current_children(&self) -> Vec<&crate::config::CommandItem> {
+        if self.command_current_path.is_empty() {
+            return self.command_tree.iter().collect();
+        }
         let items = resolve_path(&self.command_tree, &self.command_current_path);
         items.map(|i| match i {
             crate::config::CommandItem::Folder(f) => f.children.iter().collect(),
