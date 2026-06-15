@@ -331,7 +331,9 @@ impl Ashell {
             .and_then(|id| self.tabs.iter().find(|t| &t.id == id))
             .map(|tab| tab.mouse_tracking_active())
             .unwrap_or(false);
-        if mouse_tracking {
+        if mouse_tracking && !event.modifiers.shift {
+            // Mouse tracking active, Shift NOT held: forward to PTY
+            // (Shift held → override mouse tracking, fall through to selection below)
             if let Some((row, col, _)) = self.terminal_grid_point_and_side(event.position) {
                 let (btn_code, pressed) = match event.pressed_button {
                     Some(MouseButton::Left) => (crate::terminal::sgr_code::LEFT_DRAG, false),
@@ -379,7 +381,9 @@ impl Ashell {
             .and_then(|id| self.tabs.iter().find(|t| &t.id == id))
             .map(|tab| tab.mouse_tracking_active())
             .unwrap_or(false);
-        if mouse_tracking {
+        if mouse_tracking && !event.modifiers.shift {
+            // Mouse tracking active, Shift NOT held: forward release to PTY
+            // Shift held → override: auto-copy selection to clipboard, then clean up
             if let Some((row, col, _)) = self.terminal_grid_point_and_side(event.position) {
                 let bytes = encode_sgr_mouse(col + 1, row + 1, crate::terminal::sgr_code::RELEASE, 0, false);
                 tracing::info!("[mouse] forwarding release: col={}, row={}", col + 1, row + 1);
@@ -394,6 +398,16 @@ impl Ashell {
             cx.notify();
             return;
         }
+
+        // Shift override: auto-copy selected text to clipboard on release
+        if mouse_tracking && event.modifiers.shift {
+            if let Some(text) = self.active_terminal_selection_text() {
+                if !text.is_empty() {
+                    cx.write_to_clipboard(ClipboardItem::new_string(text));
+                }
+            }
+        }
+
         if self.dragging_splitter.is_some() {
             self.end_drag_split();
         }
