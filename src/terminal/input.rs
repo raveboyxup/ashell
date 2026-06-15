@@ -177,10 +177,13 @@ impl Ashell {
     }
 
     fn paste_into_terminal(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        tracing::info!("[paste] paste_into_terminal called, text_len={}", text.len());
         let Some(active_id) = self.active_tab.clone() else {
+            tracing::info!("[paste] no active tab, abort");
             return;
         };
         let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == active_id) else {
+            tracing::info!("[paste] active tab {} not found, abort", active_id);
             return;
         };
 

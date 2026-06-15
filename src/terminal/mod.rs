@@ -392,7 +392,8 @@ impl TerminalTab {
 
     pub fn paste_text(&mut self, text: &str) {
         let cleaned = text.replace('\x1b', "");
-        let paste_text = if self.term.mode().contains(TermMode::BRACKETED_PASTE) {
+        let bracketed = self.term.mode().contains(TermMode::BRACKETED_PASTE);
+        let paste_text = if bracketed {
             format!(
                 "\x1b[200~{}\x1b[201~",
                 cleaned.replace("\r\n", "\r").replace('\n', "\r")
@@ -400,7 +401,12 @@ impl TerminalTab {
         } else {
             cleaned.replace("\r\n", "\r").replace('\n', "\r")
         };
-
+        tracing::info!(
+            "[paste] paste_text: input_len={}, output_len={}, bracketed={}",
+            text.len(),
+            paste_text.len(),
+            bracketed,
+        );
         self.backend
             .send(BackendCommand::Input(paste_text.into_bytes()));
     }

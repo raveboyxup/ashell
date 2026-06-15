@@ -637,12 +637,19 @@ impl Ashell {
                         let system_sampled = this.sample_system_if_due();
                         this.sync_theme_if_due(cx);
                         if changed || system_sampled {
+                            if changed {
+                                tracing::info!("[pump] changed=true → notify");
+                            }
+                            if system_sampled {
+                                tracing::info!("[pump] system_sampled=true → notify");
+                            }
                             cx.notify();
                             idle_frames = 0;
                         } else {
                             idle_frames += 1;
                             if idle_frames >= 60 {
                                 cx.notify();
+                                tracing::info!("[pump] heartbeat notify (idle {} frames)", idle_frames);
                                 idle_frames = 0;
                             }
                         }
@@ -663,6 +670,7 @@ impl Ashell {
             changed = true;
             match event {
                 BackendEvent::Output { tab_id, bytes } => {
+                    tracing::info!("[backend] Output: tab={}, bytes={}", tab_id, bytes.len());
                     if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
                         tab.feed(&bytes);
                     }
