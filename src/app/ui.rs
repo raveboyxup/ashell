@@ -1645,6 +1645,15 @@ impl Ashell {
                             .map(|tab| tab.mouse_tracking_active())
                             .unwrap_or(false);
                         if mouse_tracking {
+                            if event.modifiers.shift {
+                                // Shift held: override mouse tracking, force text selection
+                                this.focus_pane_with_id(tab_id_clone2.clone());
+                                this.begin_terminal_selection(event, cx);
+                                window.prevent_default();
+                                cx.stop_propagation();
+                                cx.notify();
+                                return;
+                            }
                             if let Some((row, col, _)) = this.terminal_grid_point_and_side(event.position) {
                                 let btn_code = match event.button {
                                     gpui::MouseButton::Left => crate::terminal::sgr_code::LEFT_PRESS,
