@@ -16,7 +16,7 @@ use self::config::{AuthMethod, Session};
 use crate::{
     Ashell, ConnectionProgress, PaneLayout, SelectorEntry, TabGroup,
     backend::{local, ssh},
-    terminal::{BackendCommand, RenderSnapshot, TabKind, TerminalTab},
+    terminal::{BackendCommand, RenderSnapshot, TabKind, TerminalTab, encode_sgr_mouse},
     app::constants::{DEFAULT_COLS, DEFAULT_ROWS, SIDEBAR_WIDTH, TAB_BAR_HEIGHT, TERMINAL_PADDING_X, TERMINAL_PADDING_Y},
 };
 
@@ -742,6 +742,25 @@ impl Ashell {
             }
         }
         if event.button == MouseButton::Left {
+            // If mouse tracking is active, forward to PTY instead of selecting
+            let mouse_tracking = self.active_tab.as_ref()
+                .and_then(|id| self.tabs.iter().find(|t| &t.id == id))
+                .map(|tab| tab.mouse_tracking_active())
+                .unwrap_or(false);
+            if mouse_tracking {
+                if let Some((row, col, _)) = self.terminal_grid_point_and_side(event.position) {
+                    let bytes = encode_sgr_mouse(col + 1, row + 1, 0, 0, true);
+                    if let Some(tab) = self.active_tab.as_ref()
+                        .and_then(|id| self.tabs.iter_mut().find(|t| &t.id == id))
+                    {
+                        tab.backend.send(BackendCommand::Input(bytes));
+                    }
+                }
+                window.prevent_default();
+                cx.stop_propagation();
+                cx.notify();
+                return;
+            }
             self.begin_terminal_selection(event, cx);
         }
         cx.notify();
