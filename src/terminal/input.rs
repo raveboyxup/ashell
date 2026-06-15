@@ -9,7 +9,7 @@ use gpui::{
 
 use crate::{
     Ashell,
-    terminal::{BackendCommand, encode_key},
+    terminal::{BackendCommand, encode_key, encode_sgr_mouse},
     TerminalBacktabKey, TerminalTabKey,
 };
 
@@ -325,6 +325,33 @@ impl Ashell {
             }
             return;
         }
+
+        // Forward mouse move if tracking is active (MOUSE_DRAG or MOUSE_MOTION)
+        let mouse_tracking = self.active_tab.as_ref()
+            .and_then(|id| self.tabs.iter().find(|t| &t.id == id))
+            .map(|tab| tab.mouse_tracking_active())
+            .unwrap_or(false);
+        if mouse_tracking {
+            if let Some((row, col, _)) = self.terminal_grid_point_and_side(event.position) {
+                let button = match event.pressed_button {
+                    Some(MouseButton::Left) => 0u8,
+                    Some(MouseButton::Right) => 1u8,
+                    Some(MouseButton::Middle) => 2u8,
+                    _ => 35u8, // motion with no button
+                };
+                let bytes = encode_sgr_mouse(col + 1, row + 1, button, 0, true);
+                if let Some(tab) = self.active_tab.as_ref()
+                    .and_then(|id| self.tabs.iter_mut().find(|t| &t.id == id))
+                {
+                    tab.backend.send(BackendCommand::Input(bytes));
+                }
+            }
+            window.prevent_default();
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
+
         if !self.terminal_selecting || event.pressed_button != Some(MouseButton::Left) {
             return;
         }
@@ -342,10 +369,29 @@ impl Ashell {
 
     pub(crate) fn on_terminal_mouse_up(
         &mut self,
-        _event: &MouseUpEvent,
-        _window: &mut Window,
+        event: &MouseUpEvent,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Forward mouse release if tracking is active
+        let mouse_tracking = self.active_tab.as_ref()
+            .and_then(|id| self.tabs.iter().find(|t| &t.id == id))
+            .map(|tab| tab.mouse_tracking_active())
+            .unwrap_or(false);
+        if mouse_tracking {
+            if let Some((row, col, _)) = self.terminal_grid_point_and_side(event.position) {
+                let bytes = encode_sgr_mouse(col + 1, row + 1, 0, 0, false);
+                if let Some(tab) = self.active_tab.as_ref()
+                    .and_then(|id| self.tabs.iter_mut().find(|t| &t.id == id))
+                {
+                    tab.backend.send(BackendCommand::Input(bytes));
+                }
+            }
+            window.prevent_default();
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
         if self.dragging_splitter.is_some() {
             self.end_drag_split();
         }
@@ -353,7 +399,7 @@ impl Ashell {
         cx.notify();
     }
 
-    fn terminal_grid_point_and_side(
+    pub(crate) fn terminal_grid_point_and_side(
         &self,
         position: Point<Pixels>,
     ) -> Option<(usize, usize, Side)> {

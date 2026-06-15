@@ -275,6 +275,18 @@ impl TerminalTab {
         self.term.mode().contains(TermMode::APP_CURSOR)
     }
 
+    /// Returns true if any XTerm mouse tracking mode is active
+    /// (MOUSE_REPORT_CLICK, MOUSE_DRAG, or MOUSE_MOTION).
+    pub fn mouse_tracking_active(&self) -> bool {
+        self.term
+            .mode()
+            .intersects(TermMode::MOUSE_REPORT_CLICK | TermMode::MOUSE_DRAG | TermMode::MOUSE_MOTION)
+    }
+
+    pub fn sgr_mouse_active(&self) -> bool {
+        self.term.mode().contains(TermMode::SGR_MOUSE)
+    }
+
     pub fn render_snapshot(&self) -> RenderSnapshot {
         let rows = self.rows;
         let cols = self.cols;
@@ -392,6 +404,30 @@ impl TerminalTab {
         self.backend
             .send(BackendCommand::Input(paste_text.into_bytes()));
     }
+}
+
+/// Encode a mouse button event in SGR (1006) format.
+///
+/// Returns the escape sequence bytes to send to the PTY.
+/// - `col` / `row`: 1-based cell coordinates
+/// - `button`: GPUI mouse button (0=left, 1=right, 2=middle)
+/// - `modifiers`: GPUI modifier flags
+/// - `pressed`: true for button press, false for release
+///
+/// SGR format: `\e[<row;col;codeM` (press) or `\e[<row;col;codem` (release)
+pub fn encode_sgr_mouse(col: usize, row: usize, button: u8, modifiers: u8, pressed: bool) -> Vec<u8> {
+    let btn = match button {
+        0 => 0u8,     // left
+        2 => 1u8,     // middle
+        1 => 2u8,     // right (GPUI right=1)
+        _ => 0u8,
+    };
+    let mut code = btn;
+    if modifiers & 1 != 0 { code |= 4; }   // shift
+    if modifiers & 8 != 0 { code |= 8; }   // alt
+    if modifiers & 2 != 0 { code |= 16; }  // ctrl
+    if !pressed { code |= 32; }
+    format!("\x1b[<{};{};{}{}", row, col, code, if pressed { "M" } else { "m" }).into_bytes()
 }
 
 fn viewport_selection_from_range(
