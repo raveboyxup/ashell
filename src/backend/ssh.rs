@@ -133,6 +133,10 @@ async fn run_ssh(
                     Some(BackendCommand::Resize { cols, rows }) => {
                         let _ = channel.window_change(cols.into(), rows.into(), 0, 0).await;
                     }
+                    Some(BackendCommand::Flush) => {}
+                    Some(BackendCommand::Pause(ms)) => {
+                        tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+                    }
                     Some(BackendCommand::SampleMetrics) => {
                         let handle_clone = handle.clone();
                         let tab_id_clone = tab_id.clone();

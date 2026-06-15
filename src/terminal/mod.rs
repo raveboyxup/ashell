@@ -27,6 +27,8 @@ pub enum TabKind {
 #[derive(Debug)]
 pub enum BackendCommand {
     Input(Vec<u8>),
+    Flush,
+    Pause(u64),
     Resize { cols: u16, rows: u16 },
     SampleMetrics,
     Close,
@@ -391,21 +393,36 @@ impl TerminalTab {
     }
 
     pub fn paste_text(&mut self, text: &str) {
-        let cleaned = text.replace('\x1b', "").replace("\r\n", "\r").replace('\n', "\r");
+        let no_esc = text.replace('\x1b', "");
         let bracketed = self.term.mode().contains(TermMode::BRACKETED_PASTE);
         tracing::info!(
-            "[paste] paste_text: input_len={}, output_len={}, bracketed={}",
+            "[paste] paste_text: input_len={}, bracketed={}",
             text.len(),
-            cleaned.len(),
             bracketed,
         );
         if bracketed {
-            let paste_bytes = format!("\x1b[200~{}\x1b[201~", cleaned).into_bytes();
+            // Normalize newlines: \r\n -> \n, \r -> \n
+            let cleaned = no_esc.replace("\r\n", "\n").replace('\r', "\n");
+            // Feed locally for instant visibility
             self.processor.advance(&mut self.term, cleaned.as_bytes());
-            self.backend.send(BackendCommand::Input(paste_bytes));
+            // Stage 1: open bracket + explicit flush
+            self.backend
+                .send(BackendCommand::Input(b"\x1b[200~".to_vec()));
+            self.backend.send(BackendCommand::Flush);
+            // Stage 2: sanitized text body
+            self.backend
+                .send(BackendCommand::Input(cleaned.into_bytes()));
+            self.backend.send(BackendCommand::Flush);
+            // Stage 3: micro-pause + close bracket + flush
+            self.backend.send(BackendCommand::Pause(5));
+            self.backend
+                .send(BackendCommand::Input(b"\x1b[201~".to_vec()));
+            self.backend.send(BackendCommand::Flush);
         } else {
-            let safe = cleaned.replace('\r', " ");
-            self.backend.send(BackendCommand::Input(safe.into_bytes()));
+            // Fallback: strip all newline-like chars to prevent accidental execution
+            let safe = no_esc.replace("\r\n", " ").replace('\r', " ").replace('\n', " ");
+            self.backend
+                .send(BackendCommand::Input(safe.into_bytes()));
         }
     }
 }

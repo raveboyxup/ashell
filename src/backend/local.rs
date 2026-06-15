@@ -115,6 +115,12 @@ pub fn spawn_local_terminal(
                             pixel_height: 0,
                         });
                     }
+                    BackendCommand::Flush => {
+                        let _ = writer.flush();
+                    }
+                    BackendCommand::Pause(ms) => {
+                        std::thread::sleep(std::time::Duration::from_millis(ms));
+                    }
                     BackendCommand::Close => break,
                     BackendCommand::SampleMetrics => {}
                 },
