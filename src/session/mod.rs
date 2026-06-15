@@ -749,12 +749,20 @@ impl Ashell {
                 .unwrap_or(false);
             if mouse_tracking {
                 if let Some((row, col, _)) = self.terminal_grid_point_and_side(event.position) {
-                    let bytes = encode_sgr_mouse(col + 1, row + 1, 0, 0, true);
+                    let btn_code = match event.button {
+                        MouseButton::Left => crate::terminal::sgr_code::LEFT_PRESS,
+                        MouseButton::Right => crate::terminal::sgr_code::RIGHT_PRESS,
+                        _ => crate::terminal::sgr_code::LEFT_PRESS,
+                    };
+                    let bytes = encode_sgr_mouse(col + 1, row + 1, btn_code, 0, true);
+                    tracing::info!("[mouse] forwarding click: col={}, row={}, btn={}, seq={:?}", col + 1, row + 1, btn_code, String::from_utf8_lossy(&bytes));
                     if let Some(tab) = self.active_tab.as_ref()
                         .and_then(|id| self.tabs.iter_mut().find(|t| &t.id == id))
                     {
                         tab.backend.send(BackendCommand::Input(bytes));
                     }
+                } else {
+                    tracing::info!("[mouse] could not compute grid point, mouse_tracking_active but no grid point");
                 }
                 window.prevent_default();
                 cx.stop_propagation();
