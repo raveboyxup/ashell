@@ -229,6 +229,30 @@ pub fn spawn_sftp(
     }
 }
 
+async fn try_reconnect_sftp(
+    session: &Session,
+    sftp: &mut SftpSession,
+    handle: &mut Arc<russh::client::Handle<SftpClientHandler>>,
+) -> Result<()> {
+    tracing::warn!("[sftp] session dead, attempting reconnect...");
+    let new_handle = connect_and_authenticate(session).await?;
+    let channel = new_handle
+        .channel_open_session()
+        .await
+        .context("open sftp channel after reconnect")?;
+    channel
+        .request_subsystem(true, "sftp")
+        .await
+        .context("request sftp subsystem after reconnect")?;
+    let new_sftp = SftpSession::new(channel.into_stream())
+        .await
+        .context("sftp handshake after reconnect")?;
+    *handle = new_handle;
+    *sftp = new_sftp;
+    tracing::info!("[sftp] reconnected successfully");
+    Ok(())
+}
+
 async fn run_sftp(
     tab_id: String,
     session: Session,
@@ -241,7 +265,7 @@ async fn run_sftp(
         text: t!("sftp_connecting").to_string(),
     });
 
-    let handle = connect_and_authenticate(&session).await?;
+    let mut handle = connect_and_authenticate(&session).await?;
     let channel = handle
         .channel_open_session()
         .await
@@ -250,7 +274,7 @@ async fn run_sftp(
         .request_subsystem(true, "sftp")
         .await
         .context("request sftp subsystem")?;
-    let sftp = SftpSession::new(channel.into_stream())
+    let mut sftp = SftpSession::new(channel.into_stream())
         .await
         .context("sftp handshake")?;
 
@@ -299,11 +323,27 @@ async fn run_sftp(
                     path
                 };
 
-                if let Err(err) = emit_entries(&events, &tab_id, &sftp, &actual_path).await {
-                    let _ = events.send(BackendEvent::SftpStatus {
-                        tab_id: tab_id.clone(),
-                        text: format!("list failed: {err:#}"),
-                    });
+                match emit_entries(&events, &tab_id, &sftp, &actual_path).await {
+                    Ok(_) => {}
+                    Err(err) => {
+                        tracing::warn!("[sftp] ListDir failed: {err:#}, reconnecting...");
+                        match try_reconnect_sftp(&session, &mut sftp, &mut handle).await {
+                            Ok(()) => {
+                                if let Err(err2) = emit_entries(&events, &tab_id, &sftp, &actual_path).await {
+                                    let _ = events.send(BackendEvent::SftpStatus {
+                                        tab_id: tab_id.clone(),
+                                        text: format!("list failed: {err2:#}"),
+                                    });
+                                }
+                            }
+                            Err(re_err) => {
+                                let _ = events.send(BackendEvent::SftpStatus {
+                                    tab_id: tab_id.clone(),
+                                    text: format!("list failed: {err:#} (reconnect: {re_err:#})"),
+                                });
+                            }
+                        }
+                    }
                 }
             }
             SftpCommand::Preview(path) => match preview_impl(&sftp, &path).await {
@@ -314,10 +354,29 @@ async fn run_sftp(
                     });
                 }
                 Err(err) => {
-                    let _ = events.send(BackendEvent::SftpStatus {
-                        tab_id: tab_id.clone(),
-                        text: t!("preview_failed", err = format!("{err:#}")).into(),
-                    });
+                    tracing::warn!("[sftp] Preview failed: {err:#}, reconnecting...");
+                    match try_reconnect_sftp(&session, &mut sftp, &mut handle).await {
+                        Ok(()) => match preview_impl(&sftp, &path).await {
+                            Ok(preview) => {
+                                let _ = events.send(BackendEvent::SftpPreview {
+                                    tab_id: tab_id.clone(),
+                                    preview,
+                                });
+                            }
+                            Err(err2) => {
+                                let _ = events.send(BackendEvent::SftpStatus {
+                                    tab_id: tab_id.clone(),
+                                    text: t!("preview_failed", err = format!("{err2:#}")).into(),
+                                });
+                            }
+                        },
+                        Err(re_err) => {
+                            let _ = events.send(BackendEvent::SftpStatus {
+                                tab_id: tab_id.clone(),
+                                text: t!("preview_failed", err = format!("{err:#} (reconnect: {re_err:#})")).into(),
+                            });
+                        }
+                    }
                 }
             },
             SftpCommand::Download { remote, local_dir } => {
@@ -645,14 +704,14 @@ async fn run_sftp(
                 
                 tracing::info!("[sftp] creating directory: '{}'", actual_path);
 
-                match sftp.create_dir(&actual_path).await {
+                let mkdir = sftp.create_dir(&actual_path).await;
+                match mkdir {
                     Ok(_) => {
                         let _ = events.send(BackendEvent::SftpStatus {
                             tab_id: tab_id.clone(),
                             text: t!("create_folder_success", name = base_name(&actual_path)).to_string(),
                         });
                         
-                        // Re-fetch the parent directory to show the newly created folder
                         if let Some(parent) = parent_dir(&actual_path) {
                             let _ = commands_tx.send(SftpCommand::ListDir(parent));
                         } else {
@@ -660,10 +719,34 @@ async fn run_sftp(
                         }
                     }
                     Err(err) => {
-                        let _ = events.send(BackendEvent::SftpStatus {
-                            tab_id: tab_id.clone(),
-                            text: t!("create_folder_failed", err = format!("{err:#}")).to_string(),
-                        });
+                        tracing::warn!("[sftp] CreateDir failed: {err:#}, reconnecting...");
+                        match try_reconnect_sftp(&session, &mut sftp, &mut handle).await {
+                            Ok(()) => match sftp.create_dir(&actual_path).await {
+                                Ok(_) => {
+                                    let _ = events.send(BackendEvent::SftpStatus {
+                                        tab_id: tab_id.clone(),
+                                        text: t!("create_folder_success", name = base_name(&actual_path)).to_string(),
+                                    });
+                                    if let Some(parent) = parent_dir(&actual_path) {
+                                        let _ = commands_tx.send(SftpCommand::ListDir(parent));
+                                    } else {
+                                        let _ = commands_tx.send(SftpCommand::ListDir("/".to_string()));
+                                    }
+                                }
+                                Err(err2) => {
+                                    let _ = events.send(BackendEvent::SftpStatus {
+                                        tab_id: tab_id.clone(),
+                                        text: t!("create_folder_failed", err = format!("{err2:#}")).to_string(),
+                                    });
+                                }
+                            },
+                            Err(re_err) => {
+                                let _ = events.send(BackendEvent::SftpStatus {
+                                    tab_id: tab_id.clone(),
+                                    text: t!("create_folder_failed", err = format!("{err:#} (reconnect: {re_err:#})")).to_string(),
+                                });
+                            }
+                        }
                     }
                 }
             }
@@ -684,8 +767,21 @@ async fn run_sftp(
                         path.clone()
                     };
 
-                    if let Err(e) = recursive_delete(&sftp, actual_path).await {
-                        errors.push(format!("{path}: {e:#}"));
+                    match recursive_delete(&sftp, actual_path.clone()).await {
+                        Ok(_) => {}
+                        Err(e) => {
+                            tracing::warn!("[sftp] DeletePaths failed: {e:#}, reconnecting and retrying...");
+                            match try_reconnect_sftp(&session, &mut sftp, &mut handle).await {
+                                Ok(()) => {
+                                    if let Err(e2) = recursive_delete(&sftp, actual_path).await {
+                                        errors.push(format!("{path}: {e2:#}"));
+                                    }
+                                }
+                                Err(re_err) => {
+                                    errors.push(format!("{path}: {e:#} (reconnect: {re_err:#})"));
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -786,6 +882,8 @@ async fn connect_and_authenticate(
 ) -> Result<Arc<russh::client::Handle<SftpClientHandler>>> {
     let config = Arc::new(client::Config {
         inactivity_timeout: Some(std::time::Duration::from_secs(600)),
+        keepalive_interval: Some(std::time::Duration::from_secs(30)),
+        keepalive_max: 3,
         ..Default::default()
     });
     let addr = format!("{}:{}", session.host, session.port);
