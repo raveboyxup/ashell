@@ -1,7 +1,7 @@
 
 use gpui::{
-    Context, ElementId, Focusable as _, FontWeight, Hsla, InteractiveElement as _,
-    IntoElement, MouseButton, MouseDownEvent,
+    AppContext, Context, ElementId, Focusable as _, FontWeight, Hsla,
+    InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
     ParentElement as _, PathBuilder, Pixels, Render,
     StatefulInteractiveElement as _, Styled as _, Window,
     canvas, div, point, prelude::FluentBuilder as _, px, rems, uniform_list,
@@ -23,7 +23,7 @@ use rust_i18n::t;
 
 use crate::{
     Ashell, PaneLayout,
-    app::{MonitoringTab, constants::{SIDEBAR_WIDTH, TERMINAL_KEY_CONTEXT}},
+    app::{DragCommandPayload, MonitoringTab, constants::{SIDEBAR_WIDTH, TERMINAL_KEY_CONTEXT}},
     sftp::ops::is_editable_text_file,
     sftp::format_mtime,
     system::format_bytes,
@@ -893,6 +893,8 @@ impl Ashell {
             let is_active = selected_path == path;
             let name = item.name().to_string();
             let bg = if is_active { cx.theme().primary } else { cx.theme().muted.opacity(0.2) };
+            let tgt_path = path.clone();
+            let drag_payload = DragCommandPayload { path: path.clone(), name: name.clone().into() };
             div()
                 .id(("folder-tile", *actual_ix))
                 .h(tile_h)
@@ -904,13 +906,36 @@ impl Ashell {
                 .bg(bg)
                 .hover(|style| style.bg(cx.theme().primary.opacity(0.3)))
                 .cursor_pointer()
-                .on_mouse_down(MouseButton::Left, {
-                    let p = path.clone();
-                    window.listener_for(&view, move |this, _, _, cx| {
-                        if this.command_current_path == p {
+                .on_drag(drag_payload, |_, _, _, cx| cx.new(|_| gpui::Empty))
+                .drag_over::<DragCommandPayload>({
+                    let tgt = tgt_path.clone();
+                    move |style, payload, _window, cx| {
+                        if payload.path != tgt {
+                            style.bg(cx.theme().primary.opacity(0.35))
+                        } else {
+                            style
+                        }
+                    }
+                })
+                .can_drop({
+                    let tgt = tgt_path.clone();
+                    move |any, _, _| {
+                        any.downcast_ref::<DragCommandPayload>()
+                            .map(|p| p.path != tgt)
+                            .unwrap_or(false)
+                    }
+                })
+                .on_drop(cx.listener(move |this, payload: &DragCommandPayload, _, cx| {
+                    this.move_command_item(&payload.path, &tgt_path);
+                    cx.notify();
+                }))
+                .on_click({
+                    let click_path = path.clone();
+                    cx.listener(move |this, _, _, cx| {
+                        if this.command_current_path == click_path {
                             this.command_current_path.clear();
                         } else {
-                            this.command_current_path = p.clone();
+                            this.command_current_path = click_path.clone();
                         }
                         cx.notify();
                     })
@@ -1013,6 +1038,8 @@ impl Ashell {
                     p.push(ix);
                     p
                 };
+                let tgt_path = path.clone();
+                let drag_payload = DragCommandPayload { path: path.clone(), name: name.clone().into() };
                 div()
                     .id(("cmd-tile", ix))
                     .h(tile_h)
@@ -1024,12 +1051,35 @@ impl Ashell {
                     .bg(cx.theme().muted.opacity(0.12))
                     .hover(|style| style.bg(cx.theme().primary.opacity(0.2)))
                     .cursor_pointer()
-                    .on_mouse_down(MouseButton::Left, {
-                        let p = path.clone();
-                        window.listener_for(&view, move |this, _, window, cx| {
+                    .on_drag(drag_payload, |_, _, _, cx| cx.new(|_| gpui::Empty))
+                    .drag_over::<DragCommandPayload>({
+                        let tgt = tgt_path.clone();
+                        move |style, payload, _window, cx| {
+                            if payload.path != tgt {
+                                style.bg(cx.theme().primary.opacity(0.3))
+                            } else {
+                                style
+                            }
+                        }
+                    })
+                    .can_drop({
+                        let tgt = tgt_path.clone();
+                        move |any, _, _| {
+                            any.downcast_ref::<DragCommandPayload>()
+                                .map(|p| p.path != tgt)
+                                .unwrap_or(false)
+                        }
+                    })
+                    .on_drop(cx.listener(move |this, payload: &DragCommandPayload, _, cx| {
+                        this.move_command_item(&payload.path, &tgt_path);
+                        cx.notify();
+                    }))
+                    .on_click({
+                        let click_path = path.clone();
+                        cx.listener(move |this, _, window, cx| {
                             if is_folder {
-                                this.navigate_into_folder(&p);
-                            } else if let Some((cmd_str, _)) = this.get_command_at_path(&p) {
+                                this.navigate_into_folder(&click_path);
+                            } else if let Some((cmd_str, _)) = this.get_command_at_path(&click_path) {
                                 this.execute_command_string(&cmd_str, window, cx);
                             }
                             cx.notify();

@@ -218,6 +218,12 @@ pub(crate) struct CommandContextMenu {
     pub(crate) position: gpui::Point<Pixels>,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct DragCommandPayload {
+    pub path: Vec<usize>,
+    pub name: SharedString,
+}
+
 pub(crate) struct Ashell {
     pub(crate) focus_handle: FocusHandle,
     pub(crate) selector_focus_handle: FocusHandle,
@@ -1073,6 +1079,50 @@ impl Ashell {
             _ => {}
         }
     }
+
+    pub(crate) fn move_command_item(
+        &mut self,
+        from_path: &[usize],
+        to_path: &[usize],
+    ) {
+        if from_path == to_path || from_path.is_empty() || to_path.is_empty() {
+            return;
+        }
+        if to_path.starts_with(from_path) {
+            return;
+        }
+
+        let same_parent = from_path.len() == to_path.len()
+            && from_path[..from_path.len().saturating_sub(1)]
+                == to_path[..to_path.len().saturating_sub(1)];
+
+        let item = remove_tree_item_value(&mut self.command_tree, from_path);
+        let Some(item) = item else { return };
+
+        let mut adjusted_to = to_path.to_vec();
+        if same_parent {
+            let from_idx = from_path.last().copied().unwrap();
+            if let Some(to_last) = adjusted_to.last_mut() {
+                if from_idx < *to_last {
+                    *to_last -= 1;
+                }
+            }
+        }
+
+        let target_is_folder = resolve_path(&self.command_tree, &adjusted_to)
+            .map(|i| i.is_folder())
+            .unwrap_or(false);
+
+        if target_is_folder && !item.is_folder() {
+            push_item_at(&mut self.command_tree, &adjusted_to, item);
+        } else {
+            insert_item_at(&mut self.command_tree, &adjusted_to, item);
+        }
+
+        self.command_flat_items = flatten_command_tree(&self.command_tree);
+        self.config.set_custom_commands(self.command_tree.clone());
+        let _ = self.config.save();
+    }
 }
 
 fn remove_tree_item(items: &mut Vec<crate::session::config::CommandItem>, path: &[usize]) {
@@ -1164,6 +1214,40 @@ fn flatten_recursive(
             }
         }
         parent_path.pop();
+    }
+}
+
+fn remove_tree_item_value(
+    items: &mut Vec<crate::session::config::CommandItem>,
+    path: &[usize],
+) -> Option<crate::session::config::CommandItem> {
+    if path.is_empty() {
+        return None;
+    }
+    let idx = path[0];
+    if idx >= items.len() {
+        return None;
+    }
+    if path.len() == 1 {
+        Some(items.remove(idx))
+    } else if let crate::session::config::CommandItem::Folder(f) = &mut items[idx] {
+        remove_tree_item_value(&mut f.children, &path[1..])
+    } else {
+        None
+    }
+}
+
+fn insert_item_at(
+    items: &mut Vec<crate::session::config::CommandItem>,
+    path: &[usize],
+    item: crate::session::config::CommandItem,
+) {
+    if path.is_empty() {
+        items.push(item);
+    } else if path.len() == 1 {
+        items.insert(path[0], item);
+    } else if let crate::session::config::CommandItem::Folder(f) = &mut items[path[0]] {
+        insert_item_at(&mut f.children, &path[1..], item);
     }
 }
 
