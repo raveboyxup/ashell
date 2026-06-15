@@ -406,28 +406,28 @@ impl TerminalTab {
     }
 }
 
-/// Encode a mouse button event in SGR (1006) format.
+/// XTerm SGR mouse event type codes (1006 mode).
+pub mod sgr_code {
+    pub const LEFT_PRESS: u8 = 0;
+    pub const MIDDLE_PRESS: u8 = 1;
+    pub const RIGHT_PRESS: u8 = 2;
+    pub const RELEASE: u8 = 3;
+    pub const LEFT_DRAG: u8 = 32;
+    pub const MIDDLE_DRAG: u8 = 33;
+    pub const RIGHT_DRAG: u8 = 34;
+    pub const MOTION: u8 = 35; // motion without any button held
+
+    pub const SHIFT: u8 = 4;
+    pub const ALT: u8 = 8;
+    pub const CTRL: u8 = 16;
+}
+
+/// Encode a mouse event in SGR (1006) format and return the escape sequence bytes.
 ///
-/// Returns the escape sequence bytes to send to the PTY.
-/// - `col` / `row`: 1-based cell coordinates
-/// - `button`: GPUI mouse button (0=left, 1=right, 2=middle)
-/// - `modifiers`: GPUI modifier flags
-/// - `pressed`: true for button press, false for release
-///
-/// SGR format: `\e[<row;col;codeM` (press) or `\e[<row;col;codem` (release)
-pub fn encode_sgr_mouse(col: usize, row: usize, button: u8, modifiers: u8, pressed: bool) -> Vec<u8> {
-    let btn = match button {
-        0 => 0u8,     // left
-        2 => 1u8,     // middle
-        1 => 2u8,     // right (GPUI right=1)
-        _ => 0u8,
-    };
-    let mut code = btn;
-    if modifiers & 1 != 0 { code |= 4; }   // shift
-    if modifiers & 8 != 0 { code |= 8; }   // alt
-    if modifiers & 2 != 0 { code |= 16; }  // ctrl
-    if !pressed { code |= 32; }
-    format!("\x1b[<{};{};{}{}", row, col, code, if pressed { "M" } else { "m" }).into_bytes()
+/// XTerm format: `\e[<Cb;Cx;CyM` (press) or `\e[<Cb;Cx;Cym` (release/motion)
+pub fn encode_sgr_mouse(col: usize, row: usize, button_code: u8, modifiers: u8, pressed: bool) -> Vec<u8> {
+    let code = button_code | modifiers;
+    format!("\x1b[<{};{};{}{}", code, col, row, if pressed { "M" } else { "m" }).into_bytes()
 }
 
 fn viewport_selection_from_range(

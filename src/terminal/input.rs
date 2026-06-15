@@ -333,13 +333,14 @@ impl Ashell {
             .unwrap_or(false);
         if mouse_tracking {
             if let Some((row, col, _)) = self.terminal_grid_point_and_side(event.position) {
-                let button = match event.pressed_button {
-                    Some(MouseButton::Left) => 0u8,
-                    Some(MouseButton::Right) => 1u8,
-                    Some(MouseButton::Middle) => 2u8,
-                    _ => 35u8, // motion with no button
+                let (btn_code, pressed) = match event.pressed_button {
+                    Some(MouseButton::Left) => (crate::terminal::sgr_code::LEFT_DRAG, false),
+                    Some(MouseButton::Right) => (crate::terminal::sgr_code::RIGHT_DRAG, false),
+                    Some(MouseButton::Middle) => (crate::terminal::sgr_code::MIDDLE_DRAG, false),
+                    _ => (crate::terminal::sgr_code::MOTION, false),
                 };
-                let bytes = encode_sgr_mouse(col + 1, row + 1, button, 0, true);
+                let bytes = encode_sgr_mouse(col + 1, row + 1, btn_code, 0, pressed);
+                tracing::info!("[mouse] forwarding move: col={}, row={}, btn={}", col + 1, row + 1, btn_code);
                 if let Some(tab) = self.active_tab.as_ref()
                     .and_then(|id| self.tabs.iter_mut().find(|t| &t.id == id))
                 {
@@ -380,7 +381,8 @@ impl Ashell {
             .unwrap_or(false);
         if mouse_tracking {
             if let Some((row, col, _)) = self.terminal_grid_point_and_side(event.position) {
-                let bytes = encode_sgr_mouse(col + 1, row + 1, 0, 0, false);
+                let bytes = encode_sgr_mouse(col + 1, row + 1, crate::terminal::sgr_code::RELEASE, 0, false);
+                tracing::info!("[mouse] forwarding release: col={}, row={}", col + 1, row + 1);
                 if let Some(tab) = self.active_tab.as_ref()
                     .and_then(|id| self.tabs.iter_mut().find(|t| &t.id == id))
                 {

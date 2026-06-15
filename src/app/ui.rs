@@ -1638,7 +1638,32 @@ impl Ashell {
                             this.terminal_bounds.insert(tab_id_clone.clone(), bounds);
                         });
                     })
-                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                        // Forward mouse click to PTY if mouse tracking is active
+                        let mouse_tracking = this.active_tab.as_ref()
+                            .and_then(|id| this.tabs.iter().find(|t| &t.id == id))
+                            .map(|tab| tab.mouse_tracking_active())
+                            .unwrap_or(false);
+                        if mouse_tracking {
+                            if let Some((row, col, _)) = this.terminal_grid_point_and_side(event.position) {
+                                let btn_code = match event.button {
+                                    gpui::MouseButton::Left => crate::terminal::sgr_code::LEFT_PRESS,
+                                    gpui::MouseButton::Right => crate::terminal::sgr_code::RIGHT_PRESS,
+                                    _ => crate::terminal::sgr_code::LEFT_PRESS,
+                                };
+                                let bytes = crate::terminal::encode_sgr_mouse(col + 1, row + 1, btn_code, 0, true);
+                                tracing::info!("[mouse] pane forwarding click: col={}, row={}, btn={}, seq={:?}", col + 1, row + 1, btn_code, String::from_utf8_lossy(&bytes));
+                                if let Some(tab) = this.active_tab.as_ref()
+                                    .and_then(|id| this.tabs.iter_mut().find(|t| &t.id == id))
+                                {
+                                    tab.backend.send(crate::terminal::BackendCommand::Input(bytes));
+                                }
+                            }
+                            window.prevent_default();
+                            cx.stop_propagation();
+                            cx.notify();
+                            return;
+                        }
                         this.focus_pane_with_id(tab_id_clone2.clone());
                         cx.notify();
                     }))
