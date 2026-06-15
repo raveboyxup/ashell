@@ -486,7 +486,6 @@ impl Ashell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        tracing::info!("execute_command_string called with cmd='{}' (len={})", cmd.chars().take(40).collect::<String>(), cmd.len());
         let mut bytes = cmd.as_bytes().to_vec();
         bytes.push(b'\n');
         self.send_terminal_input(bytes, window, cx);
@@ -509,7 +508,6 @@ impl Ashell {
         cx: &mut Context<Self>,
     ) {
         let key = event.keystroke.key.as_str();
-        tracing::info!("on_commands_key_down: key='{}', modifiers={:?}", key, event.keystroke.modifiers);
         match key {
             "ArrowUp" => {
                 self.command_flat_selection = self
@@ -528,7 +526,6 @@ impl Ashell {
                 cx.stop_propagation();
             }
             key if key == "Enter" || key == "\n" || key == "\r" => {
-                tracing::info!("on_commands_key_down: Enter/\\n/\\r, cmd_flat_items.len={}, selection={}", self.command_flat_items.len(), self.command_flat_selection);
                 let (cmd_text, folder_path) = if let Some(item) = self.command_flat_items.get(self.command_flat_selection) {
                     let c = item.cmd.clone().map(|c| if item.append_cr { format!("{}\r", c) } else { c });
                     let p = if item.is_folder { Some(item.path.clone()) } else { None };
