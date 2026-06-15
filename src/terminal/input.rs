@@ -192,6 +192,13 @@ impl Ashell {
         window.prevent_default();
         cx.stop_propagation();
         cx.notify();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(50))
+                .await;
+            let _ = this.update(cx, |_, cx| cx.notify());
+        })
+        .detach();
     }
 
     pub(crate) fn terminal_accepts_text_input(&self) -> bool {
