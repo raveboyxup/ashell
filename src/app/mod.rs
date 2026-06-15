@@ -583,6 +583,7 @@ impl Ashell {
                 _ => {}
             }
         } else if input == &self.custom_command_input {
+            tracing::info!("custom_command_input event received");
             match event {
                 InputEvent::Change => {
                     self.custom_cmd_last_change = Instant::now();
@@ -607,7 +608,9 @@ impl Ashell {
                     window.prevent_default();
                     cx.stop_propagation();
                 }
-                _ => {}
+                _ => {
+                    tracing::info!("custom_command_input: unhandled event (not Change/PressEnter)");
+                }
             }
         } else if input == &self.new_folder_name_input {
             match event {
