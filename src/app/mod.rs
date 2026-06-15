@@ -670,7 +670,10 @@ impl Ashell {
             changed = true;
             match event {
                 BackendEvent::Output { tab_id, bytes } => {
-                    tracing::info!("[backend] Output: tab={}, bytes={}", tab_id, bytes.len());
+                    let preview: String = bytes.iter().take(40).map(|b| {
+                        if b.is_ascii_graphic() || *b == b' ' { *b as char } else { '·' }
+                    }).collect();
+                    tracing::info!("[backend] Output: tab={}, bytes={}, preview=[{}]", tab_id, bytes.len(), preview);
                     if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
                         tab.feed(&bytes);
                     }
