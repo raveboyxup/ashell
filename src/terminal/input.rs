@@ -66,6 +66,11 @@ impl Ashell {
             }
         }
 
+        // Pending paste: Enter → flush to backend; Escape → cancel; any other key → cancel + passthrough
+        if self.try_handle_pending_paste(event, window, cx) {
+            return;
+        }
+
         if event.keystroke.modifiers.secondary() && event.keystroke.key == "," {
             self.show_settings_dialog(window, cx);
             window.prevent_default();
@@ -147,6 +152,51 @@ impl Ashell {
         cx: &mut Context<Self>,
     ) {
         self.send_terminal_input(b"\x1b[Z".to_vec(), window, cx);
+    }
+
+    /// Check for a pending paste buffer and handle the current key accordingly:
+    /// - Enter → flush buffer to backend
+    /// - Escape → cancel buffer
+    /// - any other key → cancel buffer and let normal processing continue
+    fn try_handle_pending_paste(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(active_id) = self.active_tab.clone() else {
+            return false;
+        };
+        let Some(tab) = self.tabs.iter_mut().find(|t| t.id == active_id) else {
+            return false;
+        };
+        if !tab.has_pending_paste() {
+            return false;
+        }
+
+        let key = event.keystroke.key.as_str();
+        match key {
+            "Enter" | "\r" | "\n" => {
+                tab.flush_pending_paste();
+                window.prevent_default();
+                cx.stop_propagation();
+                cx.notify();
+                true
+            }
+            "Escape" => {
+                tab.cancel_pending_paste();
+                window.prevent_default();
+                cx.stop_propagation();
+                cx.notify();
+                true
+            }
+            _ => {
+                // Any other key cancels the buffer; the key itself is passed
+                // through for normal processing below.
+                tab.cancel_pending_paste();
+                false
+            }
+        }
     }
 
     fn send_terminal_input(&mut self, bytes: Vec<u8>, window: &mut Window, cx: &mut Context<Self>) {

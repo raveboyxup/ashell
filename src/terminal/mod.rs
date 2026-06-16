@@ -126,6 +126,7 @@ pub struct TerminalTab {
     rows: u16,
     pub backend: BackendTx,
     pub scroll_pixel_y: f32,
+    pub pending_paste_buffer: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -233,6 +234,7 @@ impl TerminalTab {
             rows: 30,
             backend,
             scroll_pixel_y: 0.0,
+            pending_paste_buffer: None,
         }
     }
 
@@ -392,35 +394,36 @@ impl TerminalTab {
         }
     }
 
+    pub fn has_pending_paste(&self) -> bool {
+        self.pending_paste_buffer.is_some()
+    }
+
+    pub fn flush_pending_paste(&mut self) {
+        if let Some(text) = self.pending_paste_buffer.take() {
+            tracing::info!("[paste] flushing {} bytes to backend", text.len());
+            self.backend.send(BackendCommand::Input(text.into_bytes()));
+            self.backend.send(BackendCommand::Flush);
+        }
+    }
+
+    pub fn cancel_pending_paste(&mut self) {
+        if self.pending_paste_buffer.is_some() {
+            tracing::info!("[paste] cancel pending paste buffer");
+            self.pending_paste_buffer = None;
+        }
+    }
+
     pub fn paste_text(&mut self, text: &str) {
-        let no_esc = text.replace('\x1b', "");
-        // Always use bracketed paste wrapping regardless of mode flag.
-        // Most modern shells (bash 4.4+, zsh, fish) support bracketed paste
-        // with TERM=xterm-256color. The three-stage atomic send prevents
-        // bracket markers from being split across TCP/PTY boundaries.
-        let cleaned = no_esc.replace("\r\n", "\n").replace('\r', "\n");
+        let cleaned = text.replace('\x1b', "").replace("\r\n", "\n").replace('\r', "\n");
         tracing::info!(
-            "[paste] paste_text: input_len={}, mode_bracketed={}",
+            "[paste] paste_text: input_len={}",
             text.len(),
-            self.term.mode().contains(TermMode::BRACKETED_PASTE),
         );
-        // Feed locally so the text is visible even before the shell confirms
-        // the bracketed paste. The shell will also echo text after Enter, but
-        // relying on that echo alone leaves the paste invisible in many shells.
+        // Pure local advance: show the text instantly in the terminal grid.
+        // The text is NOT sent to the backend (buffer it instead) — the user
+        // must press Enter to flush, preventing accidental command execution.
         self.processor.advance(&mut self.term, cleaned.as_bytes());
-        // Stage 1: open bracket + explicit flush
-        self.backend
-            .send(BackendCommand::Input(b"\x1b[200~".to_vec()));
-        self.backend.send(BackendCommand::Flush);
-        // Stage 2: sanitized text body
-        self.backend
-            .send(BackendCommand::Input(cleaned.into_bytes()));
-        self.backend.send(BackendCommand::Flush);
-        // Stage 3: micro-pause + close bracket + flush
-        self.backend.send(BackendCommand::Pause(5));
-        self.backend
-            .send(BackendCommand::Input(b"\x1b[201~".to_vec()));
-        self.backend.send(BackendCommand::Flush);
+        self.pending_paste_buffer = Some(cleaned);
     }
 }
 
