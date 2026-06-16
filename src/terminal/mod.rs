@@ -126,7 +126,6 @@ pub struct TerminalTab {
     rows: u16,
     pub backend: BackendTx,
     pub scroll_pixel_y: f32,
-    pub pending_paste_buffer: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -234,7 +233,6 @@ impl TerminalTab {
             rows: 30,
             backend,
             scroll_pixel_y: 0.0,
-            pending_paste_buffer: None,
         }
     }
 
@@ -394,36 +392,9 @@ impl TerminalTab {
         }
     }
 
-    pub fn has_pending_paste(&self) -> bool {
-        self.pending_paste_buffer.is_some()
-    }
-
-    pub fn flush_pending_paste(&mut self) {
-        if let Some(text) = self.pending_paste_buffer.take() {
-            tracing::info!("[paste] flushing {} bytes to backend", text.len());
-            self.backend.send(BackendCommand::Input(text.into_bytes()));
-            self.backend.send(BackendCommand::Flush);
-        }
-    }
-
-    pub fn cancel_pending_paste(&mut self) {
-        if self.pending_paste_buffer.is_some() {
-            tracing::info!("[paste] cancel pending paste buffer");
-            self.pending_paste_buffer = None;
-        }
-    }
-
-    pub fn paste_text(&mut self, text: &str) {
-        let cleaned = text.replace('\x1b', "").replace("\r\n", "\n").replace('\r', "\n");
-        tracing::info!(
-            "[paste] paste_text: input_len={}",
-            text.len(),
-        );
-        // Pure local advance: show the text instantly in the terminal grid.
-        // The text is NOT sent to the backend (buffer it instead) — the user
-        // must press Enter to flush, preventing accidental command execution.
-        self.processor.advance(&mut self.term, cleaned.as_bytes());
-        self.pending_paste_buffer = Some(cleaned);
+    /// Clean paste text: remove ESC characters and normalize newlines.
+    pub fn cleaned_paste(&self, text: &str) -> String {
+        text.replace('\x1b', "").replace("\r\n", "\n").replace('\r', "\n")
     }
 }
 

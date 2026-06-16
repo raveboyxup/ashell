@@ -66,11 +66,6 @@ impl Ashell {
             }
         }
 
-        // Pending paste: Enter → flush to backend; Escape → cancel; any other key → cancel + passthrough
-        if self.try_handle_pending_paste(event, window, cx) {
-            return;
-        }
-
         if event.keystroke.modifiers.secondary() && event.keystroke.key == "," {
             self.show_settings_dialog(window, cx);
             window.prevent_default();
@@ -154,51 +149,6 @@ impl Ashell {
         self.send_terminal_input(b"\x1b[Z".to_vec(), window, cx);
     }
 
-    /// Check for a pending paste buffer and handle the current key accordingly:
-    /// - Enter → flush buffer to backend
-    /// - Escape → cancel buffer
-    /// - any other key → cancel buffer and let normal processing continue
-    fn try_handle_pending_paste(
-        &mut self,
-        event: &KeyDownEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        let Some(active_id) = self.active_tab.clone() else {
-            return false;
-        };
-        let Some(tab) = self.tabs.iter_mut().find(|t| t.id == active_id) else {
-            return false;
-        };
-        if !tab.has_pending_paste() {
-            return false;
-        }
-
-        let key = event.keystroke.key.as_str();
-        match key {
-            "Enter" | "\r" | "\n" => {
-                tab.flush_pending_paste();
-                window.prevent_default();
-                cx.stop_propagation();
-                cx.notify();
-                true
-            }
-            "Escape" => {
-                tab.cancel_pending_paste();
-                window.prevent_default();
-                cx.stop_propagation();
-                cx.notify();
-                true
-            }
-            _ => {
-                // Any other key cancels the buffer; the key itself is passed
-                // through for normal processing below.
-                tab.cancel_pending_paste();
-                false
-            }
-        }
-    }
-
     fn send_terminal_input(&mut self, bytes: Vec<u8>, window: &mut Window, cx: &mut Context<Self>) {
         let Some(active_id) = self.active_tab.clone() else {
             return;
@@ -233,7 +183,7 @@ impl Ashell {
             return;
         };
         let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == active_id) else {
-            tracing::info!("[paste] active tab {} not found, abort", active_id);
+            tracing::info!("[paste] active tab not found, abort");
             return;
         };
 
@@ -241,15 +191,34 @@ impl Ashell {
             tab.scroll_to_bottom();
         }
         tab.clear_selection();
-        tab.paste_text(text);
+
+        let cleaned = tab.cleaned_paste(text);
+        let backend = tab.backend.clone();
+        drop(tab);
+
         window.prevent_default();
         cx.stop_propagation();
         cx.notify();
-        cx.spawn(async move |this, cx| {
+
+        // Async 3-stage atomic bracketed-paste send.
+        // No local feed — the remote shell handles display via echo.
+        cx.spawn(async move |_this, cx| {
+            backend.send(BackendCommand::Input(b"\x1b[200~".to_vec()));
+            backend.send(BackendCommand::Flush);
+
             cx.background_executor()
-                .timer(std::time::Duration::from_millis(50))
+                .timer(std::time::Duration::from_millis(15))
                 .await;
-            let _ = this.update(cx, |_, cx| cx.notify());
+
+            backend.send(BackendCommand::Input(cleaned.into_bytes()));
+            backend.send(BackendCommand::Flush);
+
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(15))
+                .await;
+
+            backend.send(BackendCommand::Input(b"\x1b[201~".to_vec()));
+            backend.send(BackendCommand::Flush);
         })
         .detach();
     }
