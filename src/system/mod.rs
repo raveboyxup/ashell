@@ -18,6 +18,7 @@ fn network_disks_from_proc() -> Vec<DiskSample> {
     const NETWORK_FS: &[&str] = &["nfs", "nfs4", "cifs", "smb3", "fuse.sshfs"];
 
     let Ok(content) = std::fs::read_to_string("/proc/mounts") else {
+        tracing::warn!("[net-disk] cannot read /proc/mounts");
         return Vec::new();
     };
     let mut out = Vec::new();
@@ -31,23 +32,32 @@ fn network_disks_from_proc() -> Vec<DiskSample> {
             continue;
         }
         let mount = parts[1];
+        tracing::info!("[net-disk] found network mount: {} type={}", mount, fstype);
         if !std::path::Path::new(mount).exists() {
+            tracing::warn!("[net-disk] mount path does not exist: {}", mount);
             continue;
         }
         let mount_c = match std::ffi::CString::new(mount) {
             Ok(c) => c,
-            Err(_) => continue,
+            Err(_) => {
+                tracing::warn!("[net-disk] CString alloc failed for: {}", mount);
+                continue;
+            }
         };
         let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
         let ret = unsafe { libc::statvfs(mount_c.as_ptr(), &mut st) };
         if ret != 0 {
+            let err = std::io::Error::last_os_error();
+            tracing::warn!("[net-disk] statvfs failed for {}: {}", mount, err);
             continue;
         }
         let total = (st.f_blocks as u64).saturating_mul(st.f_frsize as u64);
         let avail = (st.f_bavail as u64).saturating_mul(st.f_frsize as u64);
         if total == 0 {
+            tracing::warn!("[net-disk] total_bytes is 0 for {}, skipping", mount);
             continue;
         }
+        tracing::info!("[net-disk] added {} total={} avail={}", mount, total, avail);
         out.push(DiskSample {
             mount: mount.to_string(),
             available_bytes: avail,
