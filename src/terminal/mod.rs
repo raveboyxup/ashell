@@ -394,36 +394,31 @@ impl TerminalTab {
 
     pub fn paste_text(&mut self, text: &str) {
         let no_esc = text.replace('\x1b', "");
-        let bracketed = self.term.mode().contains(TermMode::BRACKETED_PASTE);
+        // Always use bracketed paste wrapping regardless of mode flag.
+        // Most modern shells (bash 4.4+, zsh, fish) support bracketed paste
+        // with TERM=xterm-256color. The three-stage atomic send prevents
+        // bracket markers from being split across TCP/PTY boundaries.
+        let cleaned = no_esc.replace("\r\n", "\n").replace('\r', "\n");
         tracing::info!(
-            "[paste] paste_text: input_len={}, bracketed={}",
+            "[paste] paste_text: input_len={}, mode_bracketed={}",
             text.len(),
-            bracketed,
+            self.term.mode().contains(TermMode::BRACKETED_PASTE),
         );
-        if bracketed {
-            // Normalize newlines: \r\n -> \n, \r -> \n
-            let cleaned = no_esc.replace("\r\n", "\n").replace('\r', "\n");
-            // Feed locally for instant visibility
-            self.processor.advance(&mut self.term, cleaned.as_bytes());
-            // Stage 1: open bracket + explicit flush
-            self.backend
-                .send(BackendCommand::Input(b"\x1b[200~".to_vec()));
-            self.backend.send(BackendCommand::Flush);
-            // Stage 2: sanitized text body
-            self.backend
-                .send(BackendCommand::Input(cleaned.into_bytes()));
-            self.backend.send(BackendCommand::Flush);
-            // Stage 3: micro-pause + close bracket + flush
-            self.backend.send(BackendCommand::Pause(5));
-            self.backend
-                .send(BackendCommand::Input(b"\x1b[201~".to_vec()));
-            self.backend.send(BackendCommand::Flush);
-        } else {
-            // Fallback: strip all newline-like chars to prevent accidental execution
-            let safe = no_esc.replace("\r\n", " ").replace('\r', " ").replace('\n', " ");
-            self.backend
-                .send(BackendCommand::Input(safe.into_bytes()));
-        }
+        // Feed locally for instant visibility
+        self.processor.advance(&mut self.term, cleaned.as_bytes());
+        // Stage 1: open bracket + explicit flush
+        self.backend
+            .send(BackendCommand::Input(b"\x1b[200~".to_vec()));
+        self.backend.send(BackendCommand::Flush);
+        // Stage 2: sanitized text body
+        self.backend
+            .send(BackendCommand::Input(cleaned.into_bytes()));
+        self.backend.send(BackendCommand::Flush);
+        // Stage 3: micro-pause + close bracket + flush
+        self.backend.send(BackendCommand::Pause(5));
+        self.backend
+            .send(BackendCommand::Input(b"\x1b[201~".to_vec()));
+        self.backend.send(BackendCommand::Flush);
     }
 }
 
