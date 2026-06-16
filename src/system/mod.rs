@@ -1,29 +1,23 @@
 use std::{
     collections::BTreeMap,
     ffi::OsStr,
-    fs,
-    path::Path,
     time::{Duration, Instant},
 };
 
 use anyhow::{Result, anyhow};
 use sysinfo::{Disks, Networks, System};
 
-const NETWORK_FS: &[&str] = &["nfs", "nfs4", "cifs", "smb3", "fuse.sshfs"];
-
-/// Known virtual/ram filesystems to exclude from disk monitoring.
-fn is_real_filesystem(fs: &OsStr) -> bool {
-    !matches!(
-        fs.to_str(),
-        Some("tmpfs" | "devtmpfs" | "ramfs" | "overlay" | "aufs")
-    )
-}
-
 /// Read `/proc/mounts`, find network filesystem mounts, and query their
 /// capacity via `statvfs`. Returns `DiskSample` entries that `sysinfo` would
 /// never discover (it only scans block devices via `/proc/partitions`).
+///
+/// Linux-only — on other platforms (macOS, Windows) sysinfo already covers
+/// every mount available.
+#[cfg(target_os = "linux")]
 fn network_disks_from_proc() -> Vec<DiskSample> {
-    let Ok(content) = fs::read_to_string("/proc/mounts") else {
+    const NETWORK_FS: &[&str] = &["nfs", "nfs4", "cifs", "smb3", "fuse.sshfs"];
+
+    let Ok(content) = std::fs::read_to_string("/proc/mounts") else {
         return Vec::new();
     };
     let mut out = Vec::new();
@@ -37,7 +31,7 @@ fn network_disks_from_proc() -> Vec<DiskSample> {
             continue;
         }
         let mount = parts[1];
-        if !Path::new(mount).exists() {
+        if !std::path::Path::new(mount).exists() {
             continue;
         }
         let mount_c = match std::ffi::CString::new(mount) {
@@ -61,6 +55,19 @@ fn network_disks_from_proc() -> Vec<DiskSample> {
         });
     }
     out
+}
+
+#[cfg(not(target_os = "linux"))]
+fn network_disks_from_proc() -> Vec<DiskSample> {
+    Vec::new()
+}
+
+/// Known virtual/ram filesystems to exclude from disk monitoring.
+fn is_real_filesystem(fs: &OsStr) -> bool {
+    !matches!(
+        fs.to_str(),
+        Some("tmpfs" | "devtmpfs" | "ramfs" | "overlay" | "aufs")
+    )
 }
 
 #[derive(Debug, Clone, Default)]
