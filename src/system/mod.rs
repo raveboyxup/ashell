@@ -71,6 +71,32 @@ impl SystemSampler {
         Duration::from_millis(1000)
     }
 
+    /// Efficiently re-read the mount table and return fresh disk samples.
+    /// Skips CPU/memory/network — caller should already have those from a recent `sample()`.
+    pub fn refresh_disks_only(&mut self) -> Vec<DiskSample> {
+        self.disks = Disks::new_with_refreshed_list();
+        let mut disks: Vec<DiskSample> = self
+            .disks
+            .iter()
+            .filter(|disk| disk.total_space() > 0 && is_real_filesystem(disk.file_system()))
+            .map(|disk| DiskSample {
+                mount: disk.mount_point().to_string_lossy().to_string(),
+                available_bytes: disk.available_space(),
+                total_bytes: disk.total_space(),
+            })
+            .collect();
+        disks.sort_by(|a, b| {
+            if a.mount == "/" {
+                return std::cmp::Ordering::Less;
+            }
+            if b.mount == "/" {
+                return std::cmp::Ordering::Greater;
+            }
+            a.mount.cmp(&b.mount)
+        });
+        disks
+    }
+
     pub fn sample(&mut self) -> SystemSnapshot {
         self.sys.refresh_cpu_usage();
         self.sys.refresh_memory();

@@ -10,7 +10,7 @@ use std::{
     ops::Range,
     rc::Rc,
     sync::mpsc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use gpui::{
@@ -308,6 +308,7 @@ pub(crate) struct Ashell {
     pub(crate) net_tx_history: Vec<f32>,
     pub(crate) last_system_sample: Instant,
     pub(crate) last_theme_sync: Instant,
+    pub(crate) last_mounts_mtime: Option<SystemTime>,
 
     pub(crate) system_tab_id: Option<String>,
     pub(crate) sftp_handles: std::collections::HashMap<String, crate::sftp::SftpHandle>,
@@ -531,6 +532,9 @@ impl Ashell {
             net_tx_history: Vec::with_capacity(20),
             last_system_sample: Instant::now(),
             last_theme_sync: Instant::now(),
+            last_mounts_mtime: std::fs::metadata("/proc/mounts")
+                .ok()
+                .and_then(|m| m.modified().ok()),
 
             system_tab_id: None,
             sftp_handles: std::collections::HashMap::new(),
@@ -641,8 +645,9 @@ impl Ashell {
                     .update(cx, |this, cx| {
                         let changed = this.drain_backend_events();
                         let system_sampled = this.sample_system_if_due();
+                        let mounts_changed = this.probe_mounts_changed();
                         this.sync_theme_if_due(cx);
-                        if changed || system_sampled {
+                        if changed || system_sampled || mounts_changed {
                             if changed {
                                 tracing::info!("[pump] changed=true → notify");
                             }
@@ -916,6 +921,37 @@ impl Ashell {
             }
             self.system = snapshot;
             return true;
+        }
+        false
+    }
+
+    /// Check /proc/mounts mtime every event-pump tick (~16ms).
+    /// Returns true if mounts changed, so the caller can notify the UI.
+    pub(crate) fn probe_mounts_changed(&mut self) -> bool {
+        // Skip for remote monitoring: /proc/mounts is meaningless on client
+        if self.system_tab_id.is_some() {
+            return false;
+        }
+        let current = std::fs::metadata("/proc/mounts")
+            .ok()
+            .and_then(|m| m.modified().ok());
+        let changed = match (self.last_mounts_mtime, current) {
+            (Some(last), Some(cur)) => cur != last,
+            _ => false,
+        };
+        if changed {
+            self.last_mounts_mtime = current;
+            let disks = self.system_sampler.refresh_disks_only();
+            self.system.disks = disks;
+            tracing::info!(
+                "[mounts] /proc/mounts changed — disk list updated, {} mounts",
+                self.system.disks.len()
+            );
+            return true;
+        }
+        // Update stored mtime on first call (constructor may have missed it)
+        if self.last_mounts_mtime.is_none() {
+            self.last_mounts_mtime = current;
         }
         false
     }
