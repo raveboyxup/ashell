@@ -317,6 +317,7 @@ dependencies = [
  "gpui-component-assets",
  "gpui_platform",
  "image",
+ "libc",
  "menu",
  "notify 6.1.1",
  "open",

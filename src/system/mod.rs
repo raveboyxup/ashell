@@ -1,11 +1,15 @@
 use std::{
     collections::BTreeMap,
     ffi::OsStr,
+    fs,
+    path::Path,
     time::{Duration, Instant},
 };
 
 use anyhow::{Result, anyhow};
 use sysinfo::{Disks, Networks, System};
+
+const NETWORK_FS: &[&str] = &["nfs", "nfs4", "cifs", "smb3", "fuse.sshfs"];
 
 /// Known virtual/ram filesystems to exclude from disk monitoring.
 fn is_real_filesystem(fs: &OsStr) -> bool {
@@ -13,6 +17,50 @@ fn is_real_filesystem(fs: &OsStr) -> bool {
         fs.to_str(),
         Some("tmpfs" | "devtmpfs" | "ramfs" | "overlay" | "aufs")
     )
+}
+
+/// Read `/proc/mounts`, find network filesystem mounts, and query their
+/// capacity via `statvfs`. Returns `DiskSample` entries that `sysinfo` would
+/// never discover (it only scans block devices via `/proc/partitions`).
+fn network_disks_from_proc() -> Vec<DiskSample> {
+    let Ok(content) = fs::read_to_string("/proc/mounts") else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for line in content.lines() {
+        let parts: Vec<&str> = line.split_ascii_whitespace().collect();
+        if parts.len() < 3 {
+            continue;
+        }
+        let fstype = parts[2];
+        if !NETWORK_FS.contains(&fstype) {
+            continue;
+        }
+        let mount = parts[1];
+        if !Path::new(mount).exists() {
+            continue;
+        }
+        let mount_c = match std::ffi::CString::new(mount) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+        let ret = unsafe { libc::statvfs(mount_c.as_ptr(), &mut st) };
+        if ret != 0 {
+            continue;
+        }
+        let total = (st.f_blocks as u64).saturating_mul(st.f_frsize as u64);
+        let avail = (st.f_bavail as u64).saturating_mul(st.f_frsize as u64);
+        if total == 0 {
+            continue;
+        }
+        out.push(DiskSample {
+            mount: mount.to_string(),
+            available_bytes: avail,
+            total_bytes: total,
+        });
+    }
+    out
 }
 
 #[derive(Debug, Clone, Default)]
@@ -71,21 +119,42 @@ impl SystemSampler {
         Duration::from_millis(1000)
     }
 
-    /// Efficiently re-read the mount table and return fresh disk samples.
-    /// Skips CPU/memory/network — caller should already have those from a recent `sample()`.
-    pub fn refresh_disks_only(&mut self) -> Vec<DiskSample> {
-        self.disks = Disks::new_with_refreshed_list();
-        let mut disks: Vec<DiskSample> = self
-            .disks
+    /// Convert a sysinfo `Disk` into a `DiskSample` (shared helper).
+    fn disk_to_sample(disk: &sysinfo::Disk) -> DiskSample {
+        DiskSample {
+            mount: disk.mount_point().to_string_lossy().to_string(),
+            available_bytes: disk.available_space(),
+            total_bytes: disk.total_space(),
+        }
+    }
+
+    /// Collect block-device-backed disks from sysinfo.
+    fn sysinfo_disks(&self) -> Vec<DiskSample> {
+        self.disks
             .iter()
             .filter(|disk| disk.total_space() > 0 && is_real_filesystem(disk.file_system()))
-            .map(|disk| DiskSample {
-                mount: disk.mount_point().to_string_lossy().to_string(),
-                available_bytes: disk.available_space(),
-                total_bytes: disk.total_space(),
-            })
-            .collect();
-        disks.sort_by(|a, b| {
+            .map(Self::disk_to_sample)
+            .collect()
+    }
+
+    /// Merge block-device disks (sysinfo) and network filesystem disks
+    /// (/proc/mounts + statvfs).  Deduplicates by mount point — the sysinfo
+    /// entry wins when the same mount is reported by both sources.
+    fn collect_all_disks(&mut self) -> Vec<DiskSample> {
+        self.disks = Disks::new_with_refreshed_list();
+        let mut sys_disks = self.sysinfo_disks();
+        let net_disks = network_disks_from_proc();
+
+        // Collect existing mount paths into a separate HashSet to avoid
+        // holding a borrow across the push below.
+        let seen: std::collections::HashSet<String> =
+            sys_disks.iter().map(|d| d.mount.clone()).collect();
+        for nd in &net_disks {
+            if !seen.contains(&nd.mount) {
+                sys_disks.push(nd.clone());
+            }
+        }
+        sys_disks.sort_by(|a, b| {
             if a.mount == "/" {
                 return std::cmp::Ordering::Less;
             }
@@ -94,20 +163,20 @@ impl SystemSampler {
             }
             a.mount.cmp(&b.mount)
         });
-        disks
+        sys_disks
+    }
+
+    /// Efficiently re-read the mount table and return fresh disk samples.
+    /// Skips CPU/memory/network — caller should already have those from a recent `sample()`.
+    pub fn refresh_disks_only(&mut self) -> Vec<DiskSample> {
+        self.collect_all_disks()
     }
 
     pub fn sample(&mut self) -> SystemSnapshot {
         self.sys.refresh_cpu_usage();
         self.sys.refresh_memory();
         self.nets.refresh(true);
-
         self.sample_count += 1;
-        if self.sample_count % 3 == 0 {
-            self.disks = Disks::new_with_refreshed_list();
-        } else {
-            self.disks.refresh(true);
-        }
 
         let cpu_percent = self.sys.global_cpu_usage() / 100.0;
         let mem_total = self.sys.total_memory();
@@ -128,25 +197,7 @@ impl SystemSampler {
         self.last_tx_total = tx_total;
         self.last_instant = now;
 
-        let mut disks: Vec<DiskSample> = self
-            .disks
-            .iter()
-            .filter(|disk| disk.total_space() > 0 && is_real_filesystem(disk.file_system()))
-            .map(|disk| DiskSample {
-                mount: disk.mount_point().to_string_lossy().to_string(),
-                available_bytes: disk.available_space(),
-                total_bytes: disk.total_space(),
-            })
-            .collect();
-        disks.sort_by(|a, b| {
-            if a.mount == "/" {
-                return std::cmp::Ordering::Less;
-            }
-            if b.mount == "/" {
-                return std::cmp::Ordering::Greater;
-            }
-            a.mount.cmp(&b.mount)
-        });
+        let disks = self.collect_all_disks();
 
         SystemSnapshot {
             cpu_percent,
