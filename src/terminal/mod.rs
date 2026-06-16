@@ -404,8 +404,8 @@ impl TerminalTab {
             text.len(),
             self.term.mode().contains(TermMode::BRACKETED_PASTE),
         );
-        // Feed locally for instant visibility
-        self.processor.advance(&mut self.term, cleaned.as_bytes());
+        // Do NOT feed locally — for bracketed paste, the shell echoes text
+        // only after user presses Enter to confirm [pasted ~N lines].
         // Stage 1: open bracket + explicit flush
         self.backend
             .send(BackendCommand::Input(b"\x1b[200~".to_vec()));
